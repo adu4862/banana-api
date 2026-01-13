@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE settings
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+server.log
+server_error.log
+
+# Project specific
+browsers/
+backend/browsers/
+browser-helper-file.json
+headers-order.json
+input-network.zip
+header-network.zip
+fingerprint-network.zip
+results/
+artifacts/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
