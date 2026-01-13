@@ -22,7 +22,8 @@ Body 为 JSON 格式，完全遵循 OpenAI 标准：
 | `size` | string | 否 | 图片尺寸。 | **关键映射**: <br> `1024x1024` -> `ratio="1:1"` <br> `1792x1024` -> `ratio="16:9"` <br> `1024x1792` -> `ratio="9:16"` <br> `1024x768` -> `ratio="4:3"` <br> `768x1024` -> `ratio="3:4"` <br> *默认分辨率均为 2K* |
 | `n` | integer | 否 | 生成数量 (默认 1)。 | 建议仅支持 1。 |
 | `response_format`| string | 否 | 返回格式。 | 仅支持 `url`。 |
-| `start_frame_image_base64` | string | 否 | **(扩展参数)** 参考图 Base64 编码。 | 支持上传参考图。 |
+| `start_frame_image_base64` | string | 否 | **(扩展参数)** 参考图 Base64 编码 (单张)。 | 兼容旧字段。 |
+| `image_assets` | array | 否 | **(扩展参数)** 参考图 Base64 数组。 | **推荐**: 支持上传多张参考图。 |
 
 ### 请求示例
 
@@ -34,12 +35,15 @@ Body 为 JSON 格式，完全遵循 OpenAI 标准：
 }
 ```
 
-**带参考图的示例 (扩展字段):**
+**带多张参考图的示例 (扩展字段):**
 ```json
 {
   "model": "lovart",
   "prompt": "将草图渲染成真实照片",
-  "start_frame_image_base64": "data:image/png;base64,iVBORw0KGgo..."
+  "image_assets": [
+      "data:image/png;base64,iVBORw0KGgo...",
+      "data:image/jpeg;base64,/9j/4AAQSkZ..."
+  ]
 }
 ```
 

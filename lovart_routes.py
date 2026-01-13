@@ -462,12 +462,14 @@ def api_generate_video():
 
 @lovart_bp.route('/generate_image', methods=['POST'])
 def api_generate_image():
-    temp_file_path = None
+    temp_file_paths = []
     try:
         # with _lovart_generate_lock: # Removed global lock
         payload = request.get_json(silent=True) or {}
         start_frame_image_path = (payload.get("start_frame_image_path") or "").strip()
         start_frame_image_base64 = (payload.get("start_frame_image_base64") or "").strip()
+        image_assets = payload.get("image_assets") or []
+        
         prompt = (payload.get("prompt") or "").strip()
         resolution = (payload.get("resolution") or "2K").strip()
         ratio = (payload.get("ratio") or "16:9").strip()
@@ -478,33 +480,54 @@ def api_generate_image():
         if missing:
             return jsonify({"status": "error", "message": f"缺少参数: {', '.join(missing)}", "data": {}}), 400
 
-        # Handle Base64 Image
+        # Handle Images
+        # Priority: image_assets > start_frame_image_base64 > start_frame_image_path
+        # We consolidate everything into final_image_paths list
+        
+        final_image_paths = []
+        
+        # 1. start_frame_image_path (Legacy, local path)
+        if start_frame_image_path:
+             final_image_paths.append(start_frame_image_path)
+
         import base64
         import tempfile
         import uuid
-        
-        final_image_path = start_frame_image_path
-        if start_frame_image_base64:
-            try:
-                # Remove header if present (e.g., data:image/png;base64,...)
-                if "," in start_frame_image_base64:
-                    start_frame_image_base64 = start_frame_image_base64.split(",", 1)[1]
-                
-                image_data = base64.b64decode(start_frame_image_base64)
-                
-                # Create temp file
-                # Use absolute path for temp file to avoid issues
-                temp_dir = tempfile.gettempdir()
-                temp_filename = f"lovart_upload_{uuid.uuid4()}.png"
-                temp_file_path = os.path.join(temp_dir, temp_filename)
-                
-                with open(temp_file_path, "wb") as f:
-                    f.write(image_data)
-                
-                final_image_path = temp_file_path
-            except Exception as e:
-                return jsonify({"status": "error", "message": f"Base64解码失败: {str(e)}", "data": {}}), 400
+        temp_dir = tempfile.gettempdir()
 
+        # 2. start_frame_image_base64 (Single)
+        if start_frame_image_base64:
+             try:
+                 if "," in start_frame_image_base64:
+                     start_frame_image_base64 = start_frame_image_base64.split(",", 1)[1]
+                 image_data = base64.b64decode(start_frame_image_base64)
+                 temp_filename = f"lovart_upload_legacy_{uuid.uuid4()}.png"
+                 t_path = os.path.join(temp_dir, temp_filename)
+                 with open(t_path, "wb") as f:
+                     f.write(image_data)
+                 temp_file_paths.append(t_path)
+                 final_image_paths.append(t_path)
+             except Exception as e:
+                 return jsonify({"status": "error", "message": f"Base64解码失败: {str(e)}", "data": {}}), 400
+
+        # 3. image_assets (Multiple Base64)
+        if image_assets and isinstance(image_assets, list):
+            for i, b64_str in enumerate(image_assets):
+                if not b64_str or not isinstance(b64_str, str):
+                    continue
+                try:
+                    if "," in b64_str:
+                        b64_str = b64_str.split(",", 1)[1]
+                    image_data = base64.b64decode(b64_str)
+                    temp_filename = f"lovart_upload_asset_{uuid.uuid4()}_{i}.png"
+                    t_path = os.path.join(temp_dir, temp_filename)
+                    with open(t_path, "wb") as f:
+                        f.write(image_data)
+                    temp_file_paths.append(t_path)
+                    final_image_paths.append(t_path)
+                except Exception as e:
+                    return jsonify({"status": "error", "message": f"image_assets[{i}] Base64解码失败: {str(e)}", "data": {}}), 400
+        
         ensure_err = _ensure_lovart_session()
         if ensure_err:
             return ensure_err
@@ -530,7 +553,8 @@ def api_generate_image():
             try:
                 success, message, data = _run_generate_image(
                     index=idx,
-                    start_frame_image_path=final_image_path,
+                    start_frame_image_path=final_image_paths[0] if final_image_paths else "",
+                    image_paths=final_image_paths, # Pass full list
                     prompt=prompt,
                     resolution=resolution,
                     ratio=ratio
@@ -572,11 +596,12 @@ def api_generate_image():
         return jsonify({"status": "error", "message": str(e)}), 500
     finally:
         # Cleanup temp file
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.remove(temp_file_path)
-            except:
-                pass
+        for p in temp_file_paths:
+            if p and os.path.exists(p):
+                try:
+                    os.remove(p)
+                except:
+                    pass
 
 @lovart_bp.route('/v1/images/generations', methods=['POST'])
 def api_generate_image_openai():
@@ -588,7 +613,7 @@ def api_generate_image_openai():
     - n -> 忽略，默认生成1张
     - response_format -> 仅支持 url
     """
-    temp_file_path = None
+    temp_file_paths = []
     try:
         payload = request.get_json(silent=True) or {}
         
@@ -596,9 +621,18 @@ def api_generate_image_openai():
         prompt = (payload.get("prompt") or "").strip()
         size = (payload.get("size") or "1024x1024").strip()
         
-        # 扩展参数：支持通过 prompt 或额外字段传递 Base64 参考图
-        # 虽然 OpenAI 标准不支持参考图，但为了兼容性，我们允许在 extra_body 或特定字段传递
+        # 扩展参数：支持多图上传
+        # 兼容 start_frame_image_base64 (单图) 和 image_assets (多图数组)
         start_frame_image_base64 = (payload.get("start_frame_image_base64") or "").strip()
+        image_assets = payload.get("image_assets") or []
+        
+        # 如果提供了单图字段，且没有提供数组，则将其放入数组
+        if start_frame_image_base64 and not image_assets:
+            image_assets = [start_frame_image_base64]
+            
+        # 确保 image_assets 是列表
+        if not isinstance(image_assets, list):
+            image_assets = []
         
         # 映射 Size 到 Ratio
         ratio = "1:1" # 默认 1024x1024
@@ -627,36 +661,41 @@ def api_generate_image_openai():
                 }
             }), 400
 
-        # Handle Base64 Image (复用原有逻辑)
+        # Handle Base64 Images (Multiple)
         import base64
         import tempfile
         import uuid
         
-        final_image_path = ""
-        if start_frame_image_base64:
-            try:
-                if "," in start_frame_image_base64:
-                    start_frame_image_base64 = start_frame_image_base64.split(",", 1)[1]
-                
-                image_data = base64.b64decode(start_frame_image_base64)
-                
-                temp_dir = tempfile.gettempdir()
-                temp_filename = f"lovart_upload_openai_{uuid.uuid4()}.png"
-                temp_file_path = os.path.join(temp_dir, temp_filename)
-                
-                with open(temp_file_path, "wb") as f:
-                    f.write(image_data)
-                
-                final_image_path = temp_file_path
-            except Exception as e:
-                return jsonify({
-                    "error": {
-                        "code": "invalid_parameter",
-                        "message": f"Base64 decode failed: {str(e)}",
-                        "type": "invalid_request_error",
-                        "param": "start_frame_image_base64"
-                    }
-                }), 400
+        final_image_paths = []
+        
+        if image_assets:
+            temp_dir = tempfile.gettempdir()
+            for i, b64_str in enumerate(image_assets):
+                if not b64_str or not isinstance(b64_str, str):
+                    continue
+                try:
+                    if "," in b64_str:
+                        b64_str = b64_str.split(",", 1)[1]
+                    
+                    image_data = base64.b64decode(b64_str)
+                    
+                    temp_filename = f"lovart_upload_openai_{uuid.uuid4()}_{i}.png"
+                    t_path = os.path.join(temp_dir, temp_filename)
+                    
+                    with open(t_path, "wb") as f:
+                        f.write(image_data)
+                    
+                    temp_file_paths.append(t_path)
+                    final_image_paths.append(t_path)
+                except Exception as e:
+                    return jsonify({
+                        "error": {
+                            "code": "invalid_parameter",
+                            "message": f"Base64 decode failed for image {i}: {str(e)}",
+                            "type": "invalid_request_error",
+                            "param": "image_assets"
+                        }
+                    }), 400
 
         ensure_err = _ensure_lovart_session()
         if ensure_err:
@@ -699,9 +738,20 @@ def api_generate_image_openai():
                 }), 503
             
             try:
+                # 兼容旧逻辑：如果 final_image_paths 只有一个元素，传给 start_frame_image_path
+                # 如果有多个，需要修改 lovart_generate_image 支持列表
+                # 这里我们假设 lovart_login.py 会修改为支持 image_paths 参数
+                # 为了不破坏签名，我们传递一个特殊参数或者修改签名
+                
+                # 暂时只传第一个作为 start_frame_image_path，后续在 _run_generate_image 中处理
+                # 或者直接修改 _run_generate_image 签名
+                
+                # 由于 _run_generate_image 是本文件的函数，我们可以直接改
+                
                 success, message, data = _run_generate_image(
                     index=idx,
-                    start_frame_image_path=final_image_path,
+                    start_frame_image_path=final_image_paths[0] if final_image_paths else "",
+                    image_paths=final_image_paths, # 新增参数
                     prompt=prompt,
                     resolution=resolution,
                     ratio=ratio
@@ -767,8 +817,10 @@ def api_generate_image_openai():
             }
         }), 500
     finally:
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.remove(temp_file_path)
-            except:
-                pass
+        # Cleanup temp files
+        for p in temp_file_paths:
+            if p and os.path.exists(p):
+                try:
+                    os.remove(p)
+                except:
+                    pass

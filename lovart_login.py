@@ -1251,7 +1251,7 @@ async def register_lovart_account(keep_alive_after_code: bool = False, ready_eve
             
     return False, "Max retries exceeded or unknown error", {}
 
-async def run_generate_image_on_page(page: Page, start_frame_image_path: str, prompt: str, resolution: str = "2K", ratio: str = "16:9", session_index: int = -1):
+async def run_generate_image_on_page(page: Page, start_frame_image_path: str, prompt: str, resolution: str = "2K", ratio: str = "16:9", session_index: int = -1, image_paths: list = None):
     prefix = f"[Session {session_index}] [lovart]" if session_index >= 0 else "[lovart]"
     await lovart_ensure_viewport(page, width=_LOVART_VIEWPORT["width"], height=_LOVART_VIEWPORT["height"])
     if not page.url.startswith("https://www.lovart.ai/canvas"):
@@ -1292,9 +1292,16 @@ async def run_generate_image_on_page(page: Page, start_frame_image_path: str, pr
     await lovart_close_right_bottom_popup(page)
     await lovart_scroll_canvas_up(page, pixels=100)
 
-    # 2. Upload Image
-    if start_frame_image_path:
-        print(f"{prefix} Uploading reference image...")
+    # 2. Upload Image(s)
+    # Combine start_frame_image_path into image_paths if not present
+    all_images = []
+    if image_paths:
+        all_images.extend(image_paths)
+    if start_frame_image_path and start_frame_image_path not in all_images:
+        all_images.insert(0, start_frame_image_path)
+    
+    if all_images:
+        print(f"{prefix} Uploading {len(all_images)} reference images...")
         ref_btn = page.get_by_test_id("generator-image-reference-button")
         
         # Fallback: SVG Path for Upload Button (from user report)
@@ -1366,7 +1373,10 @@ async def run_generate_image_on_page(page: Page, start_frame_image_path: str, pr
             await asyncio.sleep(0.2)
             await upload_option.evaluate("(el) => el.click()")
         file_chooser = await fc_info.value
-        await file_chooser.set_files(start_frame_image_path)
+        
+        # Upload multiple files at once if supported, or verify if Lovart supports multiple selection
+        # Assuming set_files supports list for multiple files
+        await file_chooser.set_files(all_images)
         await asyncio.sleep(1)
 
     # 3. Resolution & Ratio
@@ -1637,13 +1647,14 @@ async def run_generate_image_on_page(page: Page, start_frame_image_path: str, pr
         "image_url": result["image_url"]
     }
 
-async def _lovart_generate_image_async(index: int, page: Page, start_frame_image_path: str, prompt: str, resolution: str = "2K", ratio: str = "16:9"):
+async def _lovart_generate_image_async(index: int, page: Page, start_frame_image_path: str, prompt: str, resolution: str = "2K", ratio: str = "16:9", image_paths: list = None):
     if not page:
         return False, "没有可用的浏览器会话，请先调用/register登陆", {}
 
     success, message, data = await run_generate_image_on_page(
         page=page,
         start_frame_image_path=start_frame_image_path,
+        image_paths=image_paths,
         prompt=prompt,
         resolution=resolution,
         ratio=ratio,
@@ -1655,7 +1666,7 @@ async def _lovart_generate_image_async(index: int, page: Page, start_frame_image
 
     return success, message, data
 
-def lovart_generate_image(index: int, start_frame_image_path: str, prompt: str, resolution: str = "2K", ratio: str = "16:9", timeout: float = 900.0):
+def lovart_generate_image(index: int, start_frame_image_path: str, prompt: str, resolution: str = "2K", ratio: str = "16:9", timeout: float = 900.0, image_paths: list = None):
     loop, page = lovart_get_session_by_index(index)
     if not loop or not page or loop.is_closed():
         return False, "没有可用的浏览器会话，请先调用/register登陆", {}
@@ -1664,6 +1675,7 @@ def lovart_generate_image(index: int, start_frame_image_path: str, prompt: str, 
             index=index,
             page=page,
             start_frame_image_path=start_frame_image_path,
+            image_paths=image_paths,
             prompt=prompt,
             resolution=resolution,
             ratio=ratio
