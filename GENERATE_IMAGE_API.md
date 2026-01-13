@@ -1,53 +1,45 @@
-# Lovart 生成图片接口文档
+# Lovart 生成图片接口文档 (OpenAI 兼容版)
 
-本文档详细描述了 Lovart 后端服务中生成图片的接口使用方法。
+本文档描述了经过改造后的 Lovart 图片生成接口。**该接口已完全兼容 OpenAI DALL-E 接口标准**，可直接接入 New API (One API)、LangChain 等生态工具。
 
 ## 接口概述
 
-该接口用于自动化调用 Lovart 网页版进行 AI 图片生成。支持上传参考图、设置分辨率和宽高比。
-
-- **URL**: `/api/lovart/generate_image`
+- **URL**: `/v1/images/generations`
 - **Method**: `POST`
 - **Content-Type**: `application/json`
+- **Authorization**: `Bearer <Your-API-Key>` (后端目前暂未校验 Key，可传任意值)
 
 ---
 
 ## 请求参数 (Request)
 
-Body 为 JSON 格式，支持以下字段：
+Body 为 JSON 格式，完全遵循 OpenAI 标准：
 
-| 字段名 | 类型 | 必填 | 默认值 | 说明 |
+| 字段名 | 类型 | 必填 | 说明 | 内部映射逻辑 (后端实现参考) |
 | :--- | :--- | :--- | :--- | :--- |
-| `prompt` | string | **是** | - | 图片生成的提示词 (Prompt)。 |
-| `start_frame_image_base64` | string | 否 | `""` | **参考图 Base64 编码**。<br>支持带或不带 `data:image/xxx;base64,` 前缀。<br>**推荐使用此方式**上传参考图，适用于跨服务器调用。 |
-| `start_frame_image_path` | string | 否 | `""` | **参考图本地路径** (仅限本地调试)。<br>必须是服务器上的绝对路径。<br>如果同时提供了 Base64，则优先使用 Base64。 |
-| `resolution` | string | 否 | `"2K"` | 图片分辨率。<br>可选值：`"1K"`, `"2K"`, `"4K"`。 |
-| `ratio` | string | 否 | `"16:9"` | 图片宽高比。<br>可选值：`"16:9"`, `"1:1"`, `"9:16"`, `"4:3"`, `"3:4"` 等 Lovart 支持的比例。 |
+| `model` | string | 否 | 模型名称 (如 `lovart`, `dall-e-3`)。 | 可忽略，或用于区分不同底层模型。 |
+| `prompt` | string | **是** | 图片生成的提示词。 | 对应原 `prompt`。 |
+| `size` | string | 否 | 图片尺寸。 | **关键映射**: <br> `1024x1024` -> `ratio="1:1"` <br> `1792x1024` -> `ratio="16:9"` <br> `1024x1792` -> `ratio="9:16"` <br> `1024x768` -> `ratio="4:3"` <br> `768x1024` -> `ratio="3:4"` <br> *默认分辨率均为 2K* |
+| `n` | integer | 否 | 生成数量 (默认 1)。 | 建议仅支持 1。 |
+| `response_format`| string | 否 | 返回格式。 | 仅支持 `url`。 |
+| `start_frame_image_base64` | string | 否 | **(扩展参数)** 参考图 Base64 编码。 | 支持上传参考图。 |
 
 ### 请求示例
 
-**仅使用提示词：**
 ```json
 {
-    "prompt": "一个赛博朋克风格的未来城市，霓虹灯，雨夜"
+  "model": "lovart",
+  "prompt": "一个赛博朋克风格的未来城市，霓虹灯，雨夜",
+  "size": "1792x1024"
 }
 ```
 
-**使用参考图 (Base64) 并指定分辨率和比例：**
+**带参考图的示例 (扩展字段):**
 ```json
 {
-    "prompt": "将这张草图渲染成真实照片，电影质感",
-    "start_frame_image_base64": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD...",
-    "resolution": "4K",
-    "ratio": "16:9"
-}
-```
-
-**使用参考图 (本地路径 - 仅限调试)：**
-```json
-{
-    "prompt": "...",
-    "start_frame_image_path": "C:\\Users\\Admin\\Desktop\\sketch.jpg"
+  "model": "lovart",
+  "prompt": "将草图渲染成真实照片",
+  "start_frame_image_base64": "data:image/png;base64,iVBORw0KGgo..."
 }
 ```
 
@@ -55,7 +47,7 @@ Body 为 JSON 格式，支持以下字段：
 
 ## 响应结果 (Response)
 
-接口返回 JSON 格式的数据。
+严格遵循 OpenAI 格式。
 
 ### 成功响应
 
@@ -63,57 +55,42 @@ Body 为 JSON 格式，支持以下字段：
 
 ```json
 {
-    "status": "success",
-    "message": "图片生成完成",
-    "data": {
-        "points": 120,
-        "start_frame_image_path": "C:\\Users\\Admin\\Desktop\\sketch.jpg",
-        "image_url": "https://cdn.lovart.ai/artifacts/generator/2024/01/01/xxx.png"
+  "created": 1705300000,
+  "data": [
+    {
+      "url": "https://cdn.lovart.ai/artifacts/generator/2024/01/01/xxx.png"
     }
+  ]
 }
 ```
-
-**字段说明：**
-- `status`: 固定为 `"success"`。
-- `message`: 描述信息。
-- `data`:
-    - `points`: (integer) 任务完成后的剩余积分估算（可能为空或不准确，取决于页面解析情况）。
-    - `start_frame_image_path`: (string) 回传的参考图路径。
-    - `image_url`: (string) **生成的图片下载链接**。
 
 ### 失败响应
 
-- **Status Code**: `400 Bad Request` (参数错误) 或 `500 Internal Server Error` (执行错误)
+- **Status Code**: `400` 或 `500`
 
 ```json
 {
-    "status": "error",
-    "message": "缺少参数: prompt",
-    "data": {}
+  "error": {
+    "code": "invalid_parameter",
+    "message": "Missing required parameters: prompt",
+    "type": "invalid_request_error",
+    "param": null
+  }
 }
 ```
-
-或
-
-```json
-{
-    "status": "error",
-    "message": "系统繁忙，请稍后再试",
-    "data": {}
-}
-```
-
-**常见错误信息：**
-- `缺少参数: prompt`: 未提供提示词。
-- `没有可用的浏览器会话，请先调用/register登陆`: 后端尚未初始化浏览器，请先调用 `/api/lovart/register` 接口。
-- `自动登陆超时`: 浏览器启动或登录失败。
-- `重试多次失败 (积分不足或系统繁忙)`: 可能是账号积分耗尽或页面加载异常。
 
 ---
 
-## 注意事项
+## 接入 New API 配置指南
 
-1.  **参考图路径**: `start_frame_image_path` 必须是**服务器本地文件系统**上的有效绝对路径。如果是远程客户端调用，需要先将图片上传到服务器，或者自行修改后端代码支持 URL/Base64 上传。
-2.  **并发限制**: 默认配置下，后端通过 `LOVART_POOL_SIZE` 环境变量控制浏览器实例数量（默认为 3）。如果请求过多，后续请求会排队或超时。
-3.  **超时时间**: 整个生成过程默认超时时间较长（约 3-5 分钟），请确保客户端的请求超时设置足够大。
-4.  **分辨率与比例**: 参数值必须与 Lovart 网页 UI 上显示的文本完全匹配（例如 `"2K"`, `"16:9"`），否则可能无法选中。
+后端接口按上述文档改造完成后，在 New API (One API) 网页端配置如下：
+
+1.  **类型**: 选择 **OpenAI** (不要选自定义)。
+2.  **名称**: `Lovart` (任意)。
+3.  **代理地址 (Base URL)**: 填写您的 Lovart 后端服务地址，**末尾不要带 `/v1`**。
+    *   例如服务在 `http://192.168.1.100:5000`
+    *   则此处填 `http://192.168.1.100:5000`
+4.  **密钥 (Key)**: 填写任意值 (例如 `sk-any-key`)。
+5.  **自定义模型**: 填入 `lovart` (或者您希望客户端调用的模型名)。
+
+这样配置后，New API 会自动将请求发往 `http://192.168.1.100:5000/v1/images/generations`，完美兼容。

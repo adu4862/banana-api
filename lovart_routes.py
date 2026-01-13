@@ -577,3 +577,198 @@ def api_generate_image():
                 os.remove(temp_file_path)
             except:
                 pass
+
+@lovart_bp.route('/v1/images/generations', methods=['POST'])
+def api_generate_image_openai():
+    """
+    OpenAI 兼容的生图接口
+    映射逻辑:
+    - prompt -> prompt
+    - size -> ratio (1024x1024->1:1, 1792x1024->16:9, 1024x1792->9:16)
+    - n -> 忽略，默认生成1张
+    - response_format -> 仅支持 url
+    """
+    temp_file_path = None
+    try:
+        payload = request.get_json(silent=True) or {}
+        
+        # 1. 解析 OpenAI 参数
+        prompt = (payload.get("prompt") or "").strip()
+        size = (payload.get("size") or "1024x1024").strip()
+        
+        # 扩展参数：支持通过 prompt 或额外字段传递 Base64 参考图
+        # 虽然 OpenAI 标准不支持参考图，但为了兼容性，我们允许在 extra_body 或特定字段传递
+        start_frame_image_base64 = (payload.get("start_frame_image_base64") or "").strip()
+        
+        # 映射 Size 到 Ratio
+        ratio = "1:1" # 默认 1024x1024
+        if size == "1792x1024":
+            ratio = "16:9"
+        elif size == "1024x1792":
+            ratio = "9:16"
+        elif size == "1024x768":
+            ratio = "4:3"
+        elif size == "768x1024":
+            ratio = "3:4"
+        
+        # 固定分辨率为 2K (Lovart 默认质量较高)
+        resolution = "2K"
+
+        missing = []
+        if not prompt:
+            missing.append("prompt")
+        if missing:
+            return jsonify({
+                "error": {
+                    "code": "invalid_parameter",
+                    "message": f"Missing required parameters: {', '.join(missing)}",
+                    "type": "invalid_request_error",
+                    "param": None
+                }
+            }), 400
+
+        # Handle Base64 Image (复用原有逻辑)
+        import base64
+        import tempfile
+        import uuid
+        
+        final_image_path = ""
+        if start_frame_image_base64:
+            try:
+                if "," in start_frame_image_base64:
+                    start_frame_image_base64 = start_frame_image_base64.split(",", 1)[1]
+                
+                image_data = base64.b64decode(start_frame_image_base64)
+                
+                temp_dir = tempfile.gettempdir()
+                temp_filename = f"lovart_upload_openai_{uuid.uuid4()}.png"
+                temp_file_path = os.path.join(temp_dir, temp_filename)
+                
+                with open(temp_file_path, "wb") as f:
+                    f.write(image_data)
+                
+                final_image_path = temp_file_path
+            except Exception as e:
+                return jsonify({
+                    "error": {
+                        "code": "invalid_parameter",
+                        "message": f"Base64 decode failed: {str(e)}",
+                        "type": "invalid_request_error",
+                        "param": "start_frame_image_base64"
+                    }
+                }), 400
+
+        ensure_err = _ensure_lovart_session()
+        if ensure_err:
+             # 将原有错误格式转换为 OpenAI 格式
+             return jsonify({
+                "error": {
+                    "code": "server_error",
+                    "message": ensure_err.json.get("message", "Session init failed"),
+                    "type": "server_error",
+                    "param": None
+                }
+            }), 500
+
+        _ensure_capacity()
+        
+        max_retries = 3
+        idx = None
+        
+        for attempt in range(max_retries):
+            idx, loop, page = lovart_acquire_session(timeout=600)
+            if idx is None:
+                 if not lovart_has_session():
+                     return jsonify({
+                        "error": {
+                            "code": "server_error",
+                            "message": "Session disconnected",
+                            "type": "server_error",
+                            "param": None
+                        }
+                    }), 500
+                 if attempt < max_retries - 1:
+                     continue
+                 return jsonify({
+                    "error": {
+                        "code": "server_busy",
+                        "message": "System busy, please try again later",
+                        "type": "server_error",
+                        "param": None
+                    }
+                }), 503
+            
+            try:
+                success, message, data = _run_generate_image(
+                    index=idx,
+                    start_frame_image_path=final_image_path,
+                    prompt=prompt,
+                    resolution=resolution,
+                    ratio=ratio
+                )
+                
+                if (not success) and isinstance(data, dict) and data.get("low_points"):
+                    lovart_release_session(idx)
+                    idx = None
+                    ensure_err = _ensure_lovart_session()
+                    if ensure_err:
+                         return jsonify({
+                            "error": {
+                                "code": "server_error",
+                                "message": "Failed to recover session",
+                                "type": "server_error",
+                                "param": None
+                            }
+                        }), 500
+                    continue
+
+                if success:
+                    image_url = data.get("image_url")
+                    return jsonify({
+                        "created": int(time.time()),
+                        "data": [
+                            {
+                                "url": image_url
+                            }
+                        ]
+                    }), 200
+                
+                # Failed
+                return jsonify({
+                    "error": {
+                        "code": "generation_failed",
+                        "message": message,
+                        "type": "api_error",
+                        "param": None
+                    }
+                }), 500
+
+            finally:
+                if idx is not None:
+                    lovart_release_session(idx)
+                    idx = None
+                    
+        return jsonify({
+            "error": {
+                "code": "timeout",
+                "message": "Request timed out or too many retries",
+                "type": "server_error",
+                "param": None
+            }
+        }), 500
+
+    except Exception as e:
+        return jsonify({
+            "error": {
+                "code": "internal_error",
+                "message": str(e),
+                "type": "server_error",
+                "param": None
+            }
+        }), 500
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except:
+                pass
