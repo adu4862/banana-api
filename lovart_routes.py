@@ -462,26 +462,48 @@ def api_generate_video():
 
 @lovart_bp.route('/generate_image', methods=['POST'])
 def api_generate_image():
+    temp_file_path = None
     try:
         # with _lovart_generate_lock: # Removed global lock
         payload = request.get_json(silent=True) or {}
         start_frame_image_path = (payload.get("start_frame_image_path") or "").strip()
+        start_frame_image_base64 = (payload.get("start_frame_image_base64") or "").strip()
         prompt = (payload.get("prompt") or "").strip()
         resolution = (payload.get("resolution") or "2K").strip()
         ratio = (payload.get("ratio") or "16:9").strip()
 
         missing = []
-        # Note: start_frame_image_path is optional for image gen? User prompt showed upload flow.
-        # But prompt is likely required.
-        # If upload is optional, I should handle it. 
-        # In run_generate_image_on_page: if start_frame_image_path: upload...
-        # So it's optional in logic. But maybe mandatory in business logic?
-        # Let's make it optional in API if logic supports it, but prompt required.
-        
         if not prompt:
             missing.append("prompt")
         if missing:
             return jsonify({"status": "error", "message": f"缺少参数: {', '.join(missing)}", "data": {}}), 400
+
+        # Handle Base64 Image
+        import base64
+        import tempfile
+        import uuid
+        
+        final_image_path = start_frame_image_path
+        if start_frame_image_base64:
+            try:
+                # Remove header if present (e.g., data:image/png;base64,...)
+                if "," in start_frame_image_base64:
+                    start_frame_image_base64 = start_frame_image_base64.split(",", 1)[1]
+                
+                image_data = base64.b64decode(start_frame_image_base64)
+                
+                # Create temp file
+                # Use absolute path for temp file to avoid issues
+                temp_dir = tempfile.gettempdir()
+                temp_filename = f"lovart_upload_{uuid.uuid4()}.png"
+                temp_file_path = os.path.join(temp_dir, temp_filename)
+                
+                with open(temp_file_path, "wb") as f:
+                    f.write(image_data)
+                
+                final_image_path = temp_file_path
+            except Exception as e:
+                return jsonify({"status": "error", "message": f"Base64解码失败: {str(e)}", "data": {}}), 400
 
         ensure_err = _ensure_lovart_session()
         if ensure_err:
@@ -508,7 +530,7 @@ def api_generate_image():
             try:
                 success, message, data = _run_generate_image(
                     index=idx,
-                    start_frame_image_path=start_frame_image_path,
+                    start_frame_image_path=final_image_path,
                     prompt=prompt,
                     resolution=resolution,
                     ratio=ratio
@@ -548,3 +570,10 @@ def api_generate_image():
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        # Cleanup temp file
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except:
+                pass
