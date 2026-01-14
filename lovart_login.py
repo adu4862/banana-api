@@ -528,6 +528,40 @@ async def lovart_handle_security_verification(page: Page, prefix: str = "[lovart
 
     print(f"{prefix} Security Verification modal detected.")
 
+    # 优先尝试：基于物理坐标的模拟点击（用户推荐）
+    # 定位外层容器 div (class 包含 font-inter flex h-10 w-full)
+    # 获取 Bounding Box 并点击中心
+    try:
+        # 尝试更精确的定位，包含 items-center 等类名以确保唯一性
+        target_selector = "div.font-inter.flex.h-10.w-full.items-center.justify-center"
+        container = page.locator(target_selector).first
+        
+        # 如果找不到，尝试稍微宽泛一点的
+        if await container.count() == 0:
+            target_selector = "div.font-inter.flex.h-10.w-full"
+            container = page.locator(target_selector).first
+
+        if await container.count() > 0:
+            # 确保它是可见的
+            if await container.is_visible():
+                box = await container.bounding_box()
+                if box:
+                    print(f"{prefix} Found Continue container at {box}. Clicking center...")
+                    # 移动鼠标并点击
+                    await page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+                    await asyncio.sleep(0.2)
+                    await page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+                    
+                    # 等待验证通过
+                    try:
+                        await expect(title).to_be_hidden(timeout=3000)
+                        print(f"{prefix} Security Verification passed via coordinate click.")
+                        return True
+                    except Exception:
+                        pass
+    except Exception as e:
+        print(f"{prefix} Coordinate click attempt failed: {e}")
+
     modal = title.locator('xpath=ancestor::*[contains(@class,"mantine-Modal-content") or contains(@class,"mantine-Modal-body")][1]').first
 
     shadow_host_selector = "div.font-inter.flex.h-10.w-full.items-center.justify-center.rounded-lg.text-center.font-normal.text-white.transition-colors"
