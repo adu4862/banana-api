@@ -1,6 +1,4 @@
 flask>=2.3.0
 playwright>=1.40.0
-camoufox[geoip]
-browserforge>=1.0.0
 requests>=2.31.0
 colorama>=0.4.6

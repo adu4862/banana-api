@@ -6,7 +6,7 @@ import os
 # 配置
 import sys
 # 优先使用环境变量，其次尝试从命令行参数获取 IP，最后默认
-DEFAULT_API_HOST = "192.168.1.159"
+DEFAULT_API_HOST = "192.168.1.37"
 if len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
     # 如果运行 python test_image_gen.py 192.168.1.75
     API_HOST = sys.argv[1]

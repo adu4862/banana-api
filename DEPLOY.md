@@ -1,91 +1,125 @@
-# Lovart Backend 部署指南
+# Lovart Backend 部署指南 (BitBrowser 版)
 
-本指南将帮助你在 Windows Server 和 Mac mini 上长期运行该项目。
+本指南介绍如何配置和部署基于 **比特浏览器 (BitBrowser)** 的自动化环境，支持 **Windows** 和 **macOS**。
 
-## 1. 通用准备工作
+## 1. 环境准备 (通用)
 
-确保服务器满足以下条件：
-- **Python**: 已安装 Python 3.9 或更高版本。
-- **网络**: 确保防火墙允许访问 `5000` 端口（或你指定的其他端口）。
+### 1.1 安装比特浏览器
+1.  **下载**: 访问 [比特浏览器官网](https://www.bitbrowser.cn/) 下载对应系统的版本。
+    *   **Windows**: 下载 Windows 版本。
+    *   **macOS**: 下载 macOS 版本 (支持 M1/M2/M3 Apple Silicon 及 Intel)。
+2.  **安装与登录**: 安装后注册并登录账号。
 
----
+### 1.2 配置比特浏览器 API
+自动化脚本依赖本地 API 接口来控制浏览器。
 
-## 2. Windows Server 部署方案
+1.  打开比特浏览器客户端。
+2.  进入 **“设置” (Settings)** -> **“本地设置” (Local Settings)**。
+3.  找到 **“开启扩展插件/自动化端口”** 选项，将其设置为 **开启** 状态。
+4.  确保端口号为 `54345`（这是脚本默认配置，如需修改请同步修改 `lovart_login.py` 中的 `BITBROWSER_API_URL`）。
+5.  **重要**: 部署期间必须保持比特浏览器客户端在后台运行。
 
-### 方法 A：使用启动脚本（最简单）
+### 1.3 创建并获取浏览器窗口 ID
+你需要预先创建好用于自动化的浏览器窗口，并获取它们的 ID。
 
-1. 将项目文件夹复制到服务器。
-2. 双击运行 `start_server.bat`。
-3. 首次运行时，它会自动创建虚拟环境、安装依赖和浏览器内核。
-4. 保持窗口开启即可。
+1.  在“浏览器窗口”列表中，创建所需的窗口（建议配置好代理 IP）。
+2.  在列表表头右键，勾选显示 **“ID”** 列（注意是长字符串 ID，不是序号）。
+3.  复制这些 ID。
 
-### 方法 B：设置开机自启（进阶）
+### 1.4 配置项目代码
+打开项目文件 `h:\lovart-banana-backend\lovart_login.py`，找到 `BITBROWSER_IDS` 配置项：
 
-如果你希望服务器重启后自动运行，且不需要登录用户：
-
-1. 打开“任务计划程序” (Task Scheduler)。
-2. 点击“创建任务” (Create Task)。
-3. **常规**: 输入名称 "LovartBackend"，选择 "不管用户是否登录都要运行" (Run whether user is logged on or not)。
-4. **触发器**: 新建 -> "启动时" (At startup)。
-5. **操作**: 新建 -> "启动程序" -> 选择 `start_server.bat`。
-   - **注意**: 在 "起始于" (Start in) 字段中，**必须**填入脚本所在的完整文件夹路径（例如 `C:\lovart-banana-backend\`），否则会找不到文件。
-6. 保存并输入密码。
-
----
-
-## 3. macOS (Mac mini) 部署方案
-
-### 步骤 1：准备脚本
-1. 打开终端，进入项目目录。
-2. 给启动脚本添加执行权限：
-   ```bash
-   chmod +x start_server.sh
-   ```
-3. 手动运行一次 `./start_server.sh` 确保环境安装无误。
-
-### 步骤 2：配置 Launchd (开机自启 & 进程守护)
-
-1. 打开项目根目录下的 `com.lovart.backend.plist` 文件。
-2. 修改文件中的路径，将 `/Users/YOUR_USERNAME/path/to/lovart-banana-backend/` 替换为你实际的绝对路径。
-   - 例如：如果你的用户名是 `admin`，项目在桌面，路径可能是 `/Users/admin/Desktop/lovart-banana-backend/`。
-3. 将修改后的 `.plist` 文件复制到 LaunchAgents 目录：
-   ```bash
-   cp com.lovart.backend.plist ~/Library/LaunchAgents/
-   ```
-4. 加载服务：
-   ```bash
-   launchctl load ~/Library/LaunchAgents/com.lovart.backend.plist
-   ```
-5. 验证是否运行：
-   ```bash
-   # 查看服务状态
-   launchctl list | grep lovart
-   
-   # 或者直接查看日志
-   tail -f server.log
-   ```
-
-### 停止服务
-```bash
-launchctl unload ~/Library/LaunchAgents/com.lovart.backend.plist
+```python
+# Configure your Browser IDs here. Ensure you have enough IDs for the pool size.
+BITBROWSER_IDS = [
+    "你的窗口ID_1", 
+    "你的窗口ID_2", 
+    "你的窗口ID_3",
+    # ... 根据并发池大小添加更多
+]
 ```
+将你复制的 ID 填入该列表。如果 ID 数量不足，脚本会尝试自动创建新窗口（需确保 API 可用）。
+
+> **注意**: `LOVART_POOL_SIZE` 环境变量（默认为 6）决定了并发数量，请确保 `BITBROWSER_IDS` 中的 ID 数量足够覆盖并发池大小。
 
 ---
 
-## 4. 维护与监控
+## 2. Windows 部署
 
-- **日志**: 
-  - macOS 日志默认输出在项目目录下的 `server.log` 和 `server_error.log`（需在 plist 中配置路径）。
-  - Windows 控制台会直接显示日志，建议定期检查。
-- **端口**: 默认监听 `0.0.0.0:5000`。
-- **更新代码**: 拉取新代码后，建议重启服务。
-  - Windows: 关闭窗口再打开，或重启任务。
-  - macOS: `launchctl unload ...` 然后 `launchctl load ...`。
+### 方法 A：使用启动脚本 (推荐)
+项目内置了 `start_server.bat` 脚本，可自动处理虚拟环境和依赖安装。
 
-## 5. 常见问题
+1.  双击运行 `start_server.bat`。
+2.  脚本会自动安装 Python 依赖（如果尚未安装）。
+3.  看到 `Running on http://0.0.0.0:5005` (或 5000) 即表示服务启动成功。
 
-**Q: 浏览器启动失败？**
-A: 确保首次运行已经完成了 `playwright install`。如果服务器无法联网下载浏览器，可以从本地开发机打包 `.venv/Lib/site-packages/playwright/driver/package/.local-browsers` (Windows) 或对应目录到服务器。
+### 方法 B：手动运行
+1.  安装依赖：
+    ```bash
+    pip install -r requirements.txt
+    ```
+2.  启动服务：
+    ```bash
+    python main.py
+    ```
 
-**Q: 端口被占用？**
-A: 修改启动脚本中的 `PORT` 环境变量。
+---
+
+## 3. macOS 部署
+
+### 3.1 前置要求
+*   **Python 3.9+**: 建议使用 `brew install python` 安装。
+*   **比特浏览器**: 确保已安装并运行 macOS 版本，且 API 已开启 (端口 54345)。
+
+### 3.2 代理配置 (重要)
+脚本 `lovart_login.py` 中针对 macOS 有特定的代理配置逻辑（用于 API 请求，如邮箱验证、图片上传等，**不是**浏览器内的代理）。
+
+*   **默认配置**: 脚本默认假设使用 **Clash Verge**，SOCKS5 端口为 `7898`。
+    ```python
+    if platform.system().lower() == "darwin": # macOS
+        PROXY_PORT = 7898 # Clash Verge SOCKS port
+    ```
+*   **如何修改**: 如果你使用其他代理工具（如 V2RayU, Surge 等）或端口不同，请修改 `lovart_login.py` 中的 `PROXY_PORT` 变量，或者确保你的代理工具监听 `7898` 端口。
+
+### 3.3 启动服务
+项目提供了 `start_server.sh` 脚本，方便在 macOS/Linux 上运行。
+
+1.  打开终端 (Terminal)，进入项目目录。
+2.  赋予脚本执行权限：
+    ```bash
+    chmod +x start_server.sh
+    ```
+3.  运行脚本：
+    ```bash
+    ./start_server.sh
+    ```
+    *脚本会自动创建 `.venv` 虚拟环境，安装依赖，并启动服务。*
+
+### 3.4 后台运行 (可选)
+如果希望服务在后台运行，可以使用 `nohup`：
+
+```bash
+nohup ./start_server.sh > server.log 2>&1 &
+```
+查看日志：`tail -f server.log`
+
+---
+
+## 4. 常见问题排查
+
+### Q: macOS 上报错 `Connection refused` (API 连接失败)？
+*   确认比特浏览器 macOS 版已启动。
+*   确认“本地设置”中 API 端口是否为 `54345`。
+*   macOS 的防火墙或安全设置可能拦截本地连接，尝试关闭防火墙或允许比特浏览器连接。
+
+### Q: 报错 `ModuleNotFoundError: No module named 'backend'`？
+*   这是 Python 路径问题。请确保在项目根目录下运行 `main.py`。
+*   使用 `start_server.bat` (Windows) 或 `start_server.sh` (macOS) 通常能避免此问题，因为它们会自动设置工作目录。
+
+### Q: 脚本运行中途报错 `Target closed`？
+*   不要手动关闭由脚本调起的浏览器窗口。
+*   脚本会自动管理窗口的开启和关闭。如果窗口意外关闭，脚本会尝试重试。
+
+### Q: 端口被占用？
+*   macOS 脚本默认使用 `5005` 端口，并会尝试自动清理占用该端口的进程。
+*   如需更改，编辑 `start_server.sh` 或 `start_server.bat` 中的 `PORT` 变量。

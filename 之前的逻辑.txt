@@ -21,131 +21,14 @@ from colorama import Fore, Style, init
 # except ImportError:
 #     pass
 
-# from camoufox.async_api import AsyncCamoufox
-from playwright.async_api import Page, expect, async_playwright
+from camoufox.async_api import AsyncCamoufox
+from playwright.async_api import Page, expect
 
 import os
 import sys
 import uuid
 import requests
 from qiniu import Auth, put_data, put_file
-
-# BitBrowser Configuration
-BITBROWSER_API_URL = "http://127.0.0.1:54345"
-# Configure your Browser IDs here. Ensure you have enough IDs for the pool size.
-BITBROWSER_IDS = [
-    "browser_id_1", "browser_id_2", "browser_id_3", 
-    "browser_id_4", "browser_id_5", "browser_id_6"
-]
-
-def open_bitbrowser(browser_id):
-    """
-    Start BitBrowser window via API and get WebSocket address
-    """
-    url = f"{BITBROWSER_API_URL}/browser/open"
-    headers = {'Content-Type': 'application/json'}
-    payload = {
-        "id": browser_id,
-        "args": [],
-        "loadExtensions": False,
-        "extractIp": False
-    }
-
-    try:
-        print(f"Opening BitBrowser ID: {browser_id}")
-        resp = requests.post(url, json=payload, headers=headers, timeout=30)
-        data = resp.json()
-        
-        if data['success']:
-            ws_endpoint = data['data']['ws']
-            print(f"✅ Browser started, WS: {ws_endpoint}")
-            return ws_endpoint
-        else:
-            print(f"❌ Failed to start browser: {data.get('msg')}")
-            return None
-    except Exception as e:
-        print(f"❌ API Exception: {e}")
-        return None
-
-def close_bitbrowser_api(browser_id):
-    """
-    Close BitBrowser window via API
-    """
-    url = f"{BITBROWSER_API_URL}/browser/close"
-    payload = {"id": browser_id}
-    try:
-        requests.post(url, json=payload, timeout=10)
-        print(f"✅ Browser {browser_id} closed via API")
-    except Exception as e:
-        print(f"Close exception: {e}")
-
-def delete_bitbrowser_window(browser_id):
-    """
-    Delete BitBrowser window via API
-    """
-    url = f"{BITBROWSER_API_URL}/browser/delete"
-    payload = {"id": browser_id}
-    try:
-        print(f"🗑️ Deleting BitBrowser window: {browser_id}")
-        resp = requests.post(url, json=payload, headers={'Content-Type': 'application/json'}, timeout=10)
-        data = resp.json()
-        if data.get('success'):
-             print(f"✅ Browser {browser_id} deleted successfully")
-        else:
-             print(f"❌ Failed to delete browser: {data.get('msg')}")
-    except Exception as e:
-        print(f"❌ Delete exception: {e}")
-
-def create_bitbrowser_window(name_prefix="Lovart-Auto", proxy_info=None):
-    """
-    Create a new BitBrowser window via API and return its ID.
-    """
-    url = f"{BITBROWSER_API_URL}/browser/update"
-    headers = {'Content-Type': 'application/json'}
-    
-    # Basic configuration for a new window
-    payload = {
-        "platform": "Other", # Generic platform
-        "name": f"{name_prefix}-{int(time.time())}",
-        "remark": "Created by Lovart Script",
-        "url": "https://www.lovart.ai/zh", # Default URL
-        "proxyMethod": 2, # 2 = Custom Proxy, 3 = Extract IP
-        "proxyType": "noproxy", # Default to no proxy, can be updated if proxy_info provided
-        "browserFingerPrint": {
-            "coreVersion": "124" # Suggest a recent version, or leave empty/remove to let it pick default
-        } 
-    }
-    
-    # If we want random fingerprint, passing empty object or specific fields might be needed.
-    # BitBrowser docs say: "When creating a profile with a random fingerprint object, simply pass an empty object {}"
-    payload["browserFingerPrint"] = {}
-
-    if proxy_info:
-        # Example proxy_info: {"type": "socks5", "host": "...", "port": ..., "user": "...", "password": "..."}
-        payload["proxyMethod"] = 2
-        payload["proxyType"] = proxy_info.get("type", "noproxy")
-        payload["host"] = proxy_info.get("host", "")
-        payload["port"] = proxy_info.get("port", "")
-        payload["proxyUserName"] = proxy_info.get("user", "")
-        payload["proxyPassword"] = proxy_info.get("password", "")
-
-    try:
-        print(f"Creating new BitBrowser window...")
-        resp = requests.post(url, json=payload, headers=headers, timeout=30)
-        data = resp.json()
-        
-        if data.get('success'):
-            new_id = data['data']['id']
-            print(f"✅ Created new browser window: {new_id}")
-            return new_id
-        else:
-            print(f"❌ Failed to create browser: {data.get('msg')}")
-            return None
-    except Exception as e:
-        print(f"❌ Create API Exception: {e}")
-        return None
-
-
 
 # 七牛云配置
 QINIU_ACCESS_KEY = os.getenv('QINIU_ACCESS_KEY', 'YrFo8wwXHr1G2T150slBn5pHd-adC7o91UZHlgYU')
@@ -251,10 +134,9 @@ for _ in range(_LOVART_POOL_SIZE):
         "page": None,
         "busy_lock": Lock(), # Threading lock to mark session as busy
         "last_active": 0, # Timestamp of last activity
-        "bitbrowser_id": None, 
     })
 
-_LOVART_VIEWPORT = {"width": 1920, "height": 1080}
+_LOVART_VIEWPORT = {"width": 1080, "height": 1920}
 
 def lovart_get_pool_size() -> int:
     return _LOVART_POOL_SIZE
@@ -535,26 +417,18 @@ async def _lovart_close_session_async(index: int = None):
 
         browser = sess.get("browser")
         context = sess.get("context")
-        bitbrowser_id = sess.get("bitbrowser_id")
 
-        # For BitBrowser, we should close via API
-        if bitbrowser_id:
-            close_bitbrowser_api(bitbrowser_id)
-            # IMPORTANT: Delete the window to free up the 10-window limit for free users
-            delete_bitbrowser_window(bitbrowser_id)
-        else:
-            # Fallback for standard playwright cleanup if any
-            try:
-                if context:
-                    await context.close()
-            except:
-                pass
-            finally:
-                if browser:
-                    try:
-                        await browser.close()
-                    except:
-                        pass
+        try:
+            if context:
+                await context.close()
+        except:
+            pass
+        finally:
+            if browser:
+                try:
+                    await browser.close()
+                except:
+                    pass
 
         with _lovart_sessions_lock:
             # Preserve the lock
@@ -566,7 +440,6 @@ async def _lovart_close_session_async(index: int = None):
                 "context": None,
                 "page": None,
                 "busy_lock": busy_lock if busy_lock else Lock(),
-                "bitbrowser_id": None,
             }
 
 def lovart_close_session(index: int = None, timeout: float = 30.0):
@@ -820,43 +693,25 @@ async def run_generate_video_on_page(page: Page, duration_label: str, start_fram
     
     # --- Security Verification Check ---
     # User reported a modal: "Security Verification" with a "Continue" button
-    # Updated logic to be more robust based on user HTML
+    # We need to wait a bit and check for this modal.
+    # The modal might appear after clicking Generate.
     try:
-        print(f"{prefix} Checking for Security Verification modal...")
-        # 1. Check for the specific Title
-        security_title = page.locator("h2").filter(has_text="Security Verification").first
-        
-        # We use a try/except block for the wait to avoid crashing if it doesn't appear
-        try:
-            await expect(security_title).to_be_visible(timeout=5000)
+        # Wait up to 5 seconds for potential modal
+        security_modal = page.locator("div.mantine-Modal-body:has-text('Security Verification')")
+        # Use a short timeout to check if it appears
+        if await security_modal.is_visible(timeout=5000):
             print(f"{prefix} Security Verification modal detected.")
-            
-            # 2. Find the Continue button
-            # Strategy A: Button with text "Continue"
-            continue_btn = page.locator("button").filter(has_text="Continue").first
-            
-            # Strategy B: Button inside the same modal body if A fails
-            if await continue_btn.count() == 0:
-                 modal_body = page.locator(".mantine-Modal-body").filter(has=security_title).first
-                 continue_btn = modal_body.locator("button").first
-
+            continue_btn = security_modal.locator("button:has-text('Continue')").first
             if await continue_btn.is_visible():
-                print(f"{prefix} Waiting 2 seconds before clicking Continue...")
-                await asyncio.sleep(2)
+                print(f"{prefix} Waiting 3 seconds before clicking Continue...")
+                await asyncio.sleep(3)
                 print(f"{prefix} Clicking Continue on Security Verification...")
                 await continue_btn.click()
                 await asyncio.sleep(1)
             else:
                 print(f"{prefix} Continue button not found in Security Verification modal.")
-        except AssertionError:
-            # Title not found within timeout
-            pass
-        except Exception as e:
-            # Other errors (e.g. timeout)
-            pass
-
-    except Exception as e:
-        print(f"{prefix} Security check exception: {e}")
+    except Exception:
+        # Ignore timeout or other errors if modal doesn't appear
         pass
 
     try:
@@ -1122,7 +977,7 @@ async def close_google_popup(page: Page):
 
 async def register_lovart_account(keep_alive_after_code: bool = False, ready_event: Event = None, ready_payload: dict = None, session_index: int = 0):
     """
-    Automate Lovart registration process using BitBrowser & Playwright
+    Automate Lovart registration process using Camoufox & Playwright
     """
     
     # Task Parameters
@@ -1139,387 +994,308 @@ async def register_lovart_account(keep_alive_after_code: bool = False, ready_eve
     max_retries = 3
     
     while retry_count < max_retries:
-        print(f"{Fore.GREEN}Starting Lovart automation with BitBrowser (Attempt {retry_count+1})...{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}Starting Lovart automation with Camoufox (Attempt {retry_count+1})...{Style.RESET_ALL}")
 
-        # setup_playwright_env() # Not needed for Remote Connection
-
-        # Determine Browser ID
-        browser_id = None
-        if BITBROWSER_IDS:
-            if session_index < len(BITBROWSER_IDS):
-                browser_id = BITBROWSER_IDS[session_index]
-            else:
-                browser_id = BITBROWSER_IDS[0]
-                print(f"Warning: Session index {session_index} out of range. Using first ID.")
-        else:
-             print("Error: BITBROWSER_IDS not configured.")
-             return False, "BitBrowser IDs not configured", {}
-
-        # Auto-create if ID is a placeholder or invalid format (simple heuristic)
-        if browser_id and (browser_id.startswith("browser_id_") or "你的窗口ID" in browser_id):
-            print(f"⚠️ Detected placeholder ID '{browser_id}'. Attempting to auto-create a new BitBrowser window...")
-            new_id = create_bitbrowser_window(name_prefix=f"Lovart-Sess-{session_index}")
-            if new_id:
-                browser_id = new_id
-                # Update the global list in memory so we reuse this ID for this session index in future retries
-                if session_index < len(BITBROWSER_IDS):
-                    BITBROWSER_IDS[session_index] = new_id
-                print(f"✅ Updated session {session_index} to use new Browser ID: {new_id}")
-            else:
-                print("❌ Failed to auto-create browser window.")
-                retry_count += 1
-                await asyncio.sleep(5)
-                continue
-
-        # Open BitBrowser
-        ws_endpoint = open_bitbrowser(browser_id)
-        if not ws_endpoint:
-             print("Failed to open BitBrowser. Retrying...")
-             retry_count += 1
-             await asyncio.sleep(5)
-             continue
+        setup_playwright_env()
         
-        # Launch Playwright and Connect
-        async with async_playwright() as p:
-            browser = None
+        # Launch Camoufox
+        # headless=True by default, can be configured
+        # Set lang="zh-CN" to fix font rendering issues on macOS
+        async with AsyncCamoufox(headless=False, lang="zh-CN") as browser:
+            # Create context with viewport 1080x1920
             try:
-                browser = await p.chromium.connect_over_cdp(ws_endpoint)
+                context = await browser.new_context(
+                    viewport=_LOVART_VIEWPORT,
+                    screen=_LOVART_VIEWPORT,
+                    device_scale_factor=1,
+                )
+            except Exception:
+                context = await browser.new_context(viewport=_LOVART_VIEWPORT)
+            page = await context.new_page()
+            await lovart_ensure_viewport(page, width=_LOVART_VIEWPORT["width"], height=_LOVART_VIEWPORT["height"])
+            
+            try:
+                # 1. Go to https://www.lovart.ai/zh
+                print(f"{Fore.YELLOW}Navigating to Lovart...{Style.RESET_ALL}")
+                await page.goto('https://www.lovart.ai/zh', timeout=60000)
                 
-                # Use existing context/page
-                default_context = browser.contexts[0]
-                page = default_context.pages[0] if default_context.pages else await default_context.new_page()
-                context = default_context
+                # Check for Cloudflare/Verify (Camoufox should handle, but just in case)
+                title = await page.title()
+                if "Just a moment" in title or "Verify" in title:
+                    print("Cloudflare detected, waiting...")
+                    await asyncio.sleep(5)
                 
-                await lovart_ensure_viewport(page, width=_LOVART_VIEWPORT["width"], height=_LOVART_VIEWPORT["height"])
+
+                
+                points_container = page.locator(r'div.bg-\[\#262626\]').first
+                has_points_ui = await points_container.is_visible()
+                
+                if has_points_ui and not is_logged_in:
+                     print(f"{Fore.YELLOW}Logged in but points insufficient. Clearing cookies and restarting...{Style.RESET_ALL}")
+                     await context.clear_cookies()
+                     # Break inner loop to close browser, then continue outer loop
+                     print("Restarting browser session...")
+                     retry_count += 1
+                     continue 
+                
+
+                
+                # Define email input locator early to check if modal is already open
+                # The placeholder might be different or dynamic
+                # Updated based on user feedback: placeholder="电子邮箱"
+                email_input = page.get_by_placeholder("电子邮箱")
+                if await email_input.count() == 0:
+                     email_input = page.get_by_placeholder("请输入邮箱")
+                if await email_input.count() == 0:
+                     email_input = page.locator('input[type="email"]')
+                if await email_input.count() == 0:
+                     # Fallback using class and partial placeholder match
+                     email_input = page.locator('input.mantine-TextInput-input').filter(has=page.locator('xpath=self::*[contains(@placeholder, "邮箱")]'))
+
+                # Check if Email Input is ALREADY visible (e.g. auto-popup)
+                if await email_input.first.is_visible():
+                     print("Email input already visible. Skipping Register button click.")
+                else:
+                    # Click Register
+                    print(f"{Fore.YELLOW}Waiting for Register button...{Style.RESET_ALL}")
+                    
+                    # Strategies
+                    # Use a more generic selector and force click if necessary
+                    # The log says "element is outside of the viewport", so we might need to force click or scroll
+                    register_btn = page.locator('.mantine-Button-label', has_text='注册').or_(page.locator('button', has_text='注册')).first
+
+                    # Check for popup BEFORE trying to click Register (it might auto-show)
+                    if await close_google_popup(page):
+                        print("Popup closed initially.")
+                        await asyncio.sleep(1)
+
+                    # Check visibility again after closing popup
+                    if await email_input.first.is_visible():
+                        print("Email input visible after closing popup. Skipping Register click.")
+                    else:
+                        try:
+                            await expect(register_btn).to_be_visible(timeout=10000)
+                            
+                            # Try regular click first
+                            try:
+                                await register_btn.scroll_into_view_if_needed()
+                                await register_btn.click(timeout=2000)
+                            except:
+                                print("Regular click failed, trying JS click...")
+                                # Use JS click which is most reliable for stubborn elements
+                                await register_btn.evaluate("element => element.click()")
+                                
+                            print("Clicked Register.")
+
+                            # Check for Google Sign-in popup AGAIN (if triggered by click)
+                            await asyncio.sleep(1)
+                            if await close_google_popup(page):
+                                print("Popup closed.")
+                                await asyncio.sleep(1)
+                                
+                                # Only click again if input is STILL not visible
+                                if not await email_input.first.is_visible():
+                                    print("Email input not visible. Clicking Register again...")
+                                    try:
+                                        await register_btn.click()
+                                        print("Clicked Register again.")
+                                    except Exception as e:
+                                         print(f"Failed to click Register again (maybe obscured?): {e}")
+
+                        except Exception as e:
+                            print(f"Register button not found or interaction failed: {e}")
+                            # Don't return False yet, check if input appeared anyway
+                            await page.screenshot(path="register_fail.png")
+                            # return False, f"Register button fail: {e}", {}  <-- Removed return to allow falling through to check email input
+
+                # Fill Email
+                print("Waiting for email input...")
+                
+                # Check if we are still on the landing page (Register didn't open modal)
+                # Maybe JS click triggered the event but the UI didn't react fast enough
+                # Or maybe we need to click the 'Register' tab inside a login modal?
                 
                 try:
-                    # 1. Go to https://www.lovart.ai/zh
-                    print(f"{Fore.YELLOW}Navigating to Lovart...{Style.RESET_ALL}")
-                    await page.goto('https://www.lovart.ai/zh', timeout=60000)
+                    await expect(email_input.first).to_be_visible(timeout=10000)
+                except:
+                    print("Email input not found immediately. Diagnosing...")
                     
-                    # Check for Cloudflare/Verify (Camoufox should handle, but just in case)
-                    title = await page.title()
-                    if "Just a moment" in title or "Verify" in title:
-                        print("Cloudflare detected, waiting...")
-                        await asyncio.sleep(5)
-                    
-
-                    
-                    points_container = page.locator(r'div.bg-\[\#262626\]').first
-                    has_points_ui = await points_container.is_visible()
-                    
-                    if has_points_ui:
-                        print(f"{Fore.YELLOW}Already logged in. Checking points...{Style.RESET_ALL}")
-                        points = 0
-                        try:
-                            points = await _lovart_get_points_async(page)
-                        except:
-                            pass
-                        
-                        if points < 20:
-                            print(f"{Fore.YELLOW}Points insufficient ({points}). Clearing cookies and restarting...{Style.RESET_ALL}")
-                            await context.clear_cookies()
-                            try:
-                                await page.evaluate("window.localStorage.clear(); window.sessionStorage.clear();")
-                            except:
-                                pass
-                            print("Restarting browser session...")
-                            retry_count += 1
-                            # Close this session attempt properly
-                            close_bitbrowser_api(browser_id)
-                            delete_bitbrowser_window(browser_id) # Free up quota
-                            continue 
+                    # 1. Check if we need to click "Continue with Email" or similar
+                    # Sometimes the modal shows Social Login buttons first
+                    email_btn = page.locator('button').filter(has_text='邮箱').or_(page.locator('button').filter(has_text='Email'))
+                    if await email_btn.count() > 0 and await email_btn.first.is_visible():
+                        # Check if enabled to avoid TimeoutError
+                        if await email_btn.first.is_enabled():
+                            print("Found enabled 'Email' button. Clicking it...")
+                            await email_btn.first.click()
+                            await asyncio.sleep(1)
                         else:
-                            print(f"Points sufficient ({points}). Reusing session.")
-                            if keep_alive_after_code:
-                                print(f"登陆成功 (Session {session_index})，浏览器保持存活。")
-                                with _lovart_sessions_lock:
-                                    if session_index < len(_lovart_sessions):
-                                        sess = _lovart_sessions[session_index]
-                                        busy_lock = sess.get("busy_lock")
-                                        _lovart_sessions[session_index] = {
-                                            "thread": threading.current_thread(),
-                                            "loop": asyncio.get_running_loop(),
-                                            "browser": browser,
-                                            "context": context,
-                                            "page": page,
-                                            "busy_lock": busy_lock if busy_lock else Lock(),
-                                            "bitbrowser_id": browser_id,
-                                        }
-                                if ready_event is not None:
-                                    ready_event.set()
-                                while True:
-                                    await asyncio.sleep(3600)
-                            return True, "Login Reused", {"email": "existing"}
-                    
+                            print("Found 'Email' button but it is disabled. Skipping click.")
 
+                    # 2. Check if we are in Login mode instead of Register
+                    # Look for "Sign up" or "注册" switch in the modal
+                    switch_to_register = page.locator('.mantine-Text-root').filter(has_text='去注册').or_(page.locator('div').filter(has_text='去注册'))
+                    if await switch_to_register.count() > 0 and await switch_to_register.first.is_visible():
+                        print("Found switch to Register. Clicking...")
+                        await switch_to_register.first.click()
+                        await asyncio.sleep(1)
                     
-                    # Define email input locator early to check if modal is already open
-                    # The placeholder might be different or dynamic
-                    # Updated based on user feedback: placeholder="电子邮箱"
+                    # 3. Try clicking Register button again (maybe first click missed)
+                    modal = page.locator('.mantine-Modal-content')
+                    if await modal.count() == 0:
+                        print("Modal did not open. Trying to click Register button again...")
+                        await register_btn.evaluate("element => element.click()")
+                        await asyncio.sleep(2)
+                    
+                    # 4. Final attempt to find input
+                    # Try finding generic input again with updated selectors
                     email_input = page.get_by_placeholder("电子邮箱")
                     if await email_input.count() == 0:
-                         email_input = page.get_by_placeholder("请输入邮箱")
-                    if await email_input.count() == 0:
-                         email_input = page.locator('input[type="email"]')
-                    if await email_input.count() == 0:
-                         # Fallback using class and partial placeholder match
-                         email_input = page.locator('input.mantine-TextInput-input').filter(has=page.locator('xpath=self::*[contains(@placeholder, "邮箱")]'))
-
-                    # Check if Email Input is ALREADY visible (e.g. auto-popup)
-                    if await email_input.first.is_visible():
-                         print("Email input already visible. Skipping Register button click.")
-                    else:
-                        # Click Register
-                        print(f"{Fore.YELLOW}Waiting for Register button...{Style.RESET_ALL}")
-                        
-                        # Strategies
-                        # Use a more generic selector and force click if necessary
-                        # The log says "element is outside of the viewport", so we might need to force click or scroll
-                        register_btn = page.locator('.mantine-Button-label', has_text='注册').or_(page.locator('button', has_text='注册')).first
-
-                        # Check for popup BEFORE trying to click Register (it might auto-show)
-                        if await close_google_popup(page):
-                            print("Popup closed initially.")
-                            await asyncio.sleep(1)
-
-                        # Check visibility again after closing popup
-                        if await email_input.first.is_visible():
-                            print("Email input visible after closing popup. Skipping Register click.")
-                        else:
-                            try:
-                                await expect(register_btn).to_be_visible(timeout=10000)
-                                
-                                # Try regular click first
-                                try:
-                                    await register_btn.scroll_into_view_if_needed()
-                                    await register_btn.click(timeout=2000)
-                                except:
-                                    print("Regular click failed, trying JS click...")
-                                    # Use JS click which is most reliable for stubborn elements
-                                    await register_btn.evaluate("element => element.click()")
-                                    
-                                print("Clicked Register.")
-
-                                # Check for Google Sign-in popup AGAIN (if triggered by click)
-                                await asyncio.sleep(1)
-                                if await close_google_popup(page):
-                                    print("Popup closed.")
-                                    await asyncio.sleep(1)
-                                    
-                                    # Only click again if input is STILL not visible
-                                    if not await email_input.first.is_visible():
-                                        print("Email input not visible. Clicking Register again...")
-                                        try:
-                                            await register_btn.click()
-                                            print("Clicked Register again.")
-                                        except Exception as e:
-                                             print(f"Failed to click Register again (maybe obscured?): {e}")
-
-                            except Exception as e:
-                                print(f"Register button not found or interaction failed: {e}")
-                                # Don't return False yet, check if input appeared anyway
-                                await page.screenshot(path="register_fail.png")
-                                # return False, f"Register button fail: {e}", {}  <-- Removed return to allow falling through to check email input
-
-                    # Fill Email
-                    print("Waiting for email input...")
-                    
-                    # Check if we are still on the landing page (Register didn't open modal)
-                    # Maybe JS click triggered the event but the UI didn't react fast enough
-                    # Or maybe we need to click the 'Register' tab inside a login modal?
+                        email_input = page.locator('input[type="text"]').or_(page.locator('input[type="email"]')).first
                     
                     try:
-                        await expect(email_input.first).to_be_visible(timeout=10000)
+                        await expect(email_input.first).to_be_visible(timeout=5000)
                     except:
-                        print("Email input not found immediately. Diagnosing...")
+                         print("Still cannot find email input. Dumping page state...")
+                         # Dump buttons to see what IS there
+                         try:
+                             buttons = await page.locator('button').all_inner_texts()
+                             print(f"Buttons found: {buttons[:20]}...") 
+                         except:
+                             print("Could not list buttons.")
+                         await page.screenshot(path="debug_final_fail.png")
+                         return False, "Could not find email input", {}
+
+                try:
+                    print("Email input found. Fetching email...")
+                    
+                    # Get Email NOW (after confirming input exists)
+                    email, token = get_temp_email()
+                    if not email:
+                        print("Could not get email. Retrying...")
+                        retry_count += 1
+                        continue
+                    
+                    print(f"Token: {token}")
+                    await email_input.first.fill(email)
+                    print("Email filled.")
+                    
+                    # Click Get Code
+                    
+                    # Try updated selector strategies for "Get Code"
+                    # It might be "获取验证码" or "Get Code" or "使用邮箱继续"
+                    # User confirmed: "使用邮箱继续" (id="emailLogin") triggers the email.
+                    get_code_btn = page.locator('button').filter(has_text='获取验证码') \
+                        .or_(page.locator('button').filter(has_text='Get Code')) \
+                        .or_(page.locator('button').filter(has_text='使用邮箱继续')) \
+                        .or_(page.locator('#emailLogin'))
+                    
+                    # If not found, try finding the button next to the email input
+                    if await get_code_btn.count() == 0:
+                         # Sometimes it's a sibling of the input
+                         get_code_btn = page.locator('.mantine-Input-wrapper').locator('..').locator('button')
+
+                    if await get_code_btn.count() > 0:
+                        # Ensure we click the visible one
+                        if await get_code_btn.first.is_visible():
+                             await get_code_btn.first.click()
+                             print("Clicked Get Code.")
+                        else:
+                             print("Get Code button found but not visible.")
+                             # Dump buttons for debugging
+                             buttons = await page.locator('button').all_inner_texts()
+                             print(f"All buttons: {buttons}")
+                             await page.screenshot(path="debug_get_code_fail.png")
+                             return False, "Get Code button not visible", {}
+                    else:
+                        print("Get Code button not found.")
+                        # Dump buttons for debugging
+                        buttons = await page.locator('button').all_inner_texts()
+                        print(f"All buttons: {buttons}")
+                        await page.screenshot(path="debug_get_code_fail.png")
+                        return False, "Get Code button not found", {}
                         
-                        # 1. Check if we need to click "Continue with Email" or similar
-                        # Sometimes the modal shows Social Login buttons first
-                        email_btn = page.locator('button').filter(has_text='邮箱').or_(page.locator('button').filter(has_text='Email'))
-                        if await email_btn.count() > 0 and await email_btn.first.is_visible():
-                            # Check if enabled to avoid TimeoutError
-                            if await email_btn.first.is_enabled():
-                                print("Found enabled 'Email' button. Clicking it...")
-                                await email_btn.first.click()
-                                await asyncio.sleep(1)
+                    # Wait and Poll for Code
+                    print(f"{Fore.YELLOW}Waiting for verification code...{Style.RESET_ALL}")
+                    verification_code = None
+                    for i in range(20): # 60 seconds approx (20 * 3)
+                        time.sleep(3)
+                        verification_code = get_email_code(token)
+                        if verification_code:
+                            print(f"{Fore.GREEN}Code received: {verification_code}{Style.RESET_ALL}")
+                            break
+                        print(f"Waiting for code... ({i+1}/20)")
+                    
+                    if verification_code:
+                        # Input Code
+                        # Usually 6 inputs
+                        print("Inputting code...")
+                        # Try finding inputs by index or class
+                        # Selector from original: @data-testid=undefined-input-{idx}
+                        
+                        for idx, digit in enumerate(verification_code):
+                            input_box = page.get_by_test_id(f'undefined-input-{idx}')
+                            if await input_box.count() > 0:
+                                await input_box.fill(digit)
                             else:
-                                print("Found 'Email' button but it is disabled. Skipping click.")
+                                # Fallback: try finding all inputs in the verification container
+                                inputs = page.locator('.mantine-PinInput-input')
+                                if await inputs.count() >= 6:
+                                    await inputs.nth(idx).fill(digit)
+                        
+                        print("Code entered.")
+                        
+                        await asyncio.sleep(2)
+                        
+                        if ready_payload is not None:
+                            ready_payload["email"] = email
 
-                        # 2. Check if we are in Login mode instead of Register
-                        # Look for "Sign up" or "注册" switch in the modal
-                        switch_to_register = page.locator('.mantine-Text-root').filter(has_text='去注册').or_(page.locator('div').filter(has_text='去注册'))
-                        if await switch_to_register.count() > 0 and await switch_to_register.first.is_visible():
-                            print("Found switch to Register. Clicking...")
-                            await switch_to_register.first.click()
-                            await asyncio.sleep(1)
-                        
-                        # 3. Try clicking Register button again (maybe first click missed)
-                        modal = page.locator('.mantine-Modal-content')
-                        if await modal.count() == 0:
-                            print("Modal did not open. Trying to click Register button again...")
-                            try:
-                                await register_btn.evaluate("element => element.click()")
-                            except:
-                                pass
-                            await asyncio.sleep(2)
-                        
-                        # 4. Final attempt to find input
-                        # Try finding generic input again with updated selectors
-                        email_input = page.get_by_placeholder("电子邮箱")
-                        if await email_input.count() == 0:
-                            email_input = page.locator('input[type="text"]').or_(page.locator('input[type="email"]')).first
-                        
                         try:
-                            await expect(email_input.first).to_be_visible(timeout=5000)
-                        except:
-                             print("Still cannot find email input. Dumping page state...")
-                             # Dump buttons to see what IS there
-                             try:
-                                 buttons = await page.locator('button').all_inner_texts()
-                                 print(f"Buttons found: {buttons[:20]}...") 
-                             except:
-                                 print("Could not list buttons.")
-                             await page.screenshot(path="debug_final_fail.png")
-                             return False, "Could not find email input", {}
-
-                    try:
-                        print("Email input found. Fetching email...")
-                        
-                        # Get Email NOW (after confirming input exists)
-                        email, token = get_temp_email()
-                        if not email:
-                            print("Could not get email. Retrying...")
+                            await lovart_prepare_canvas_page(page, timeout_ms=25000)
+                        except Exception as e:
+                            msg = f"登陆后页面初始化失败: {e}"
+                            print(f"{msg}. Retrying...")
                             retry_count += 1
                             continue
-                        
-                        print(f"Token: {token}")
-                        await email_input.first.fill(email)
-                        print("Email filled.")
-                        
-                        # Click Get Code
-                        
-                        # Try updated selector strategies for "Get Code"
-                        # It might be "获取验证码" or "Get Code" or "使用邮箱继续"
-                        # User confirmed: "使用邮箱继续" (id="emailLogin") triggers the email.
-                        get_code_btn = page.locator('button').filter(has_text='获取验证码') \
-                            .or_(page.locator('button').filter(has_text='Get Code')) \
-                            .or_(page.locator('button').filter(has_text='使用邮箱继续')) \
-                            .or_(page.locator('#emailLogin'))
-                        
-                        # If not found, try finding the button next to the email input
-                        if await get_code_btn.count() == 0:
-                             # Sometimes it's a sibling of the input
-                             get_code_btn = page.locator('.mantine-Input-wrapper').locator('..').locator('button')
+                            # if ready_payload is not None:
+                            #     ready_payload["error"] = msg
+                            # if ready_event is not None:
+                            #     ready_event.set()
+                            # return False, msg, {}
 
-                        if await get_code_btn.count() > 0:
-                            # Ensure we click the visible one
-                            if await get_code_btn.first.is_visible():
-                                 await get_code_btn.first.click()
-                                 print("Clicked Get Code.")
-                            else:
-                                 print("Get Code button found but not visible.")
-                                 # Dump buttons for debugging
-                                 buttons = await page.locator('button').all_inner_texts()
-                                 print(f"All buttons: {buttons}")
-                                 await page.screenshot(path="debug_get_code_fail.png")
-                                 return False, "Get Code button not visible", {}
-                        else:
-                            print("Get Code button not found.")
-                            # Dump buttons for debugging
-                            buttons = await page.locator('button').all_inner_texts()
-                            print(f"All buttons: {buttons}")
-                            await page.screenshot(path="debug_get_code_fail.png")
-                            return False, "Get Code button not found", {}
-                            
-                        # Wait and Poll for Code
-                        print(f"{Fore.YELLOW}Waiting for verification code...{Style.RESET_ALL}")
-                        verification_code = None
-                        for i in range(20): # 60 seconds approx (20 * 3)
-                            await asyncio.sleep(3)
-                            verification_code = get_email_code(token)
-                            if verification_code:
-                                print(f"{Fore.GREEN}Code received: {verification_code}{Style.RESET_ALL}")
-                                break
-                            print(f"Waiting for code... ({i+1}/20)")
-                        
-                        if verification_code:
-                            # Input Code
-                            # Usually 6 inputs
-                            print("Inputting code...")
-                            # Try finding inputs by index or class
-                            # Selector from original: @data-testid=undefined-input-{idx}
-                            
-                            for idx, digit in enumerate(verification_code):
-                                input_box = page.get_by_test_id(f'undefined-input-{idx}')
-                                if await input_box.count() > 0:
-                                    await input_box.fill(digit)
-                                else:
-                                    # Fallback: try finding all inputs in the verification container
-                                    inputs = page.locator('.mantine-PinInput-input')
-                                    if await inputs.count() >= 6:
-                                        await inputs.nth(idx).fill(digit)
-                            
-                            print("Code entered.")
-                            
-                            await asyncio.sleep(2)
-                            
-                            if ready_payload is not None:
-                                ready_payload["email"] = email
-
-                            try:
-                                await lovart_prepare_canvas_page(page, timeout_ms=25000)
-                            except Exception as e:
-                                msg = f"登陆后页面初始化失败: {e}"
-                                print(f"{msg}. Retrying...")
-                                retry_count += 1
-                                continue
-                                # if ready_payload is not None:
-                                #     ready_payload["error"] = msg
-                                # if ready_event is not None:
-                                #     ready_event.set()
-                                # return False, msg, {}
-
-                            if keep_alive_after_code:
-                                print(f"登陆成功 (Session {session_index})，浏览器保持存活。")
-                                with _lovart_sessions_lock:
-                                    if session_index < len(_lovart_sessions):
-                                        sess = _lovart_sessions[session_index]
-                                        busy_lock = sess.get("busy_lock")
-                                        _lovart_sessions[session_index] = {
-                                            "thread": threading.current_thread(),
-                                            "loop": asyncio.get_running_loop(),
-                                            "browser": browser,
-                                            "context": context,
-                                            "page": page,
-                                            "busy_lock": busy_lock if busy_lock else Lock(),
-                                            "bitbrowser_id": browser_id,
-                                        }
-                                if ready_event is not None:
-                                    ready_event.set()
-                                while True:
-                                    await asyncio.sleep(3600)
-
+                        if keep_alive_after_code:
+                            print(f"登陆成功 (Session {session_index})，浏览器保持存活。")
+                            with _lovart_sessions_lock:
+                                if session_index < len(_lovart_sessions):
+                                    sess = _lovart_sessions[session_index]
+                                    busy_lock = sess.get("busy_lock")
+                                    _lovart_sessions[session_index] = {
+                                        "thread": threading.current_thread(),
+                                        "loop": asyncio.get_running_loop(),
+                                        "browser": browser,
+                                        "context": context,
+                                        "page": page,
+                                        "busy_lock": busy_lock if busy_lock else Lock(),
+                                    }
                             if ready_event is not None:
                                 ready_event.set()
-                            print("登陆成功。")
-                            return True, "登陆成功", {"email": email}
-                       
-                                
-                        else:
-                            print("Failed to receive code.")
-                            return False, "Failed to receive code", {}
-                            
-                    except Exception as e:
-                        print(f"Email input interaction failed: {e}")
-                        return False, f"Email input interaction failed: {e}", {}
-                except Exception as e:
-                     print(f"Inner loop exception: {e}")
-                     import traceback
-                     traceback.print_exc()
-                     retry_count += 1
-                     continue
+                            while True:
+                                await asyncio.sleep(3600)
 
+                        if ready_event is not None:
+                            ready_event.set()
+                        print("登陆成功。")
+                        return True, "登陆成功", {"email": email}
+                   
+                            
+                    else:
+                        print("Failed to receive code.")
+                        return False, "Failed to receive code", {}
+                        
+                except Exception as e:
+                    print(f"Email input interaction failed: {e}")
+                    return False, f"Email input interaction failed: {e}", {}
+            
             except Exception as e:
                 print(f"{Fore.RED}Error in automation loop: {e}{Style.RESET_ALL}")
                 import traceback
@@ -1527,12 +1303,8 @@ async def register_lovart_account(keep_alive_after_code: bool = False, ready_eve
                 retry_count += 1
                 continue
             
-            # If we reach here, successful execution usually returns earlier or loop continues
+            # If we reach here, successful execution usually returns earlier
             print("Session ended.")
-            # If we are here, we are not keeping alive.
-            if not keep_alive_after_code:
-                close_bitbrowser_api(browser_id)
-                delete_bitbrowser_window(browser_id) # Free up quota
             break
             
     return False, "Max retries exceeded or unknown error", {}
@@ -1890,43 +1662,25 @@ async def run_generate_image_on_page(page: Page, start_frame_image_path: str, pr
     
     # --- Security Verification Check ---
     # User reported a modal: "Security Verification" with a "Continue" button
-    # Updated logic to be more robust based on user HTML
+    # We need to wait a bit and check for this modal.
+    # The modal might appear after clicking Generate.
     try:
-        print(f"{prefix} Checking for Security Verification modal...")
-        # 1. Check for the specific Title
-        security_title = page.locator("h2").filter(has_text="Security Verification").first
-        
-        # We use a try/except block for the wait to avoid crashing if it doesn't appear
-        try:
-            await expect(security_title).to_be_visible(timeout=5000)
+        # Wait up to 5 seconds for potential modal
+        security_modal = page.locator("div.mantine-Modal-body:has-text('Security Verification')")
+        # Use a short timeout to check if it appears
+        if await security_modal.is_visible(timeout=5000):
             print(f"{prefix} Security Verification modal detected.")
-            
-            # 2. Find the Continue button
-            # Strategy A: Button with text "Continue"
-            continue_btn = page.locator("button").filter(has_text="Continue").first
-            
-            # Strategy B: Button inside the same modal body if A fails
-            if await continue_btn.count() == 0:
-                 modal_body = page.locator(".mantine-Modal-body").filter(has=security_title).first
-                 continue_btn = modal_body.locator("button").first
-
+            continue_btn = security_modal.locator("button:has-text('Continue')").first
             if await continue_btn.is_visible():
-                print(f"{prefix} Waiting 2 seconds before clicking Continue...")
-                await asyncio.sleep(2)
+                print(f"{prefix} Waiting 3 seconds before clicking Continue...")
+                await asyncio.sleep(3)
                 print(f"{prefix} Clicking Continue on Security Verification...")
                 await continue_btn.click()
                 await asyncio.sleep(1)
             else:
                 print(f"{prefix} Continue button not found in Security Verification modal.")
-        except AssertionError:
-            # Title not found within timeout
-            pass
-        except Exception as e:
-            # Other errors (e.g. timeout)
-            pass
-
-    except Exception as e:
-        print(f"{prefix} Security check exception: {e}")
+    except Exception:
+        # Ignore timeout or other errors if modal doesn't appear
         pass
 
     try:

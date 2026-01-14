@@ -1,25 +1,31 @@
-pip install flask playwright camoufox[geoip] browserforge requests colorama
-playwright install  # 安装浏览器内核
+# Lovart Backend (BitBrowser Edition)
 
+此项目是一个基于 Python + Playwright + BitBrowser 的 Lovart 自动化后端服务。
 
-在 macOS 终端中执行以下命令即可（假设你已经安装了 Python 3）：
+## 快速开始
 
-1. 克隆/下载项目 到本地。
-2. 创建虚拟环境 ：
-   ```
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
-3. 安装依赖 ：
-   ```
-   pip install -r requirements.txt
-   ```
-4. 安装浏览器内核 ：
-   ```
-   playwright install
-   ```
-5. 运行项目 ：
-   ```
-   python3 main.py
-   ```
-项目启动后，功能体验与 Windows 环境一致。
+请查看 [DEPLOY.md](DEPLOY.md) 获取详细的部署和配置指南。
+
+## 核心依赖
+
+- **Flask**: 提供 API 接口
+- **Playwright**: 浏览器自动化控制
+- **BitBrowser**: 提供指纹浏览器环境和本地 API
+
+## 运行要求
+
+1.  **操作系统**: Windows (推荐，因为 BitBrowser 主要在 Windows 上运行) 或 macOS。
+2.  **软件**: 必须安装并运行 [比特浏览器 (BitBrowser)](https://www.bitbrowser.cn/)。
+3.  **Python**: 3.9+
+
+## 常用命令
+
+安装依赖：
+```bash
+pip install -r requirements.txt
+```
+
+启动服务：
+```bash
+python main.py
+```
