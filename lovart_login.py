@@ -519,6 +519,129 @@ async def lovart_scroll_canvas_up(page: Page, pixels: int = 100):
     except Exception:
         return False
 
+async def lovart_handle_security_verification(page: Page, prefix: str = "[lovart]"):
+    title = page.locator("h2").filter(has_text=re.compile(r"(Security Verification|安全验证)", re.IGNORECASE)).first
+    try:
+        await expect(title).to_be_visible(timeout=5000)
+    except Exception:
+        return False
+
+    print(f"{prefix} Security Verification modal detected.")
+
+    modal = title.locator('xpath=ancestor::*[contains(@class,"mantine-Modal-content") or contains(@class,"mantine-Modal-body")][1]').first
+
+    shadow_host_selector = "div.font-inter.flex.h-10.w-full.items-center.justify-center.rounded-lg.text-center.font-normal.text-white.transition-colors"
+
+    candidates = [
+        modal.locator(shadow_host_selector).first if await modal.count() > 0 else page.locator(shadow_host_selector).first,
+        page.get_by_role("button", name=re.compile(r"^(Continue|继续)$", re.IGNORECASE)).first,
+        page.locator("button").filter(has_text=re.compile(r"(Continue|继续)", re.IGNORECASE)).first,
+    ]
+
+    if await modal.count() > 0:
+        candidates.insert(0, modal.locator(shadow_host_selector).first)
+        candidates.insert(0, modal.get_by_role("button", name=re.compile(r"^(Continue|继续)$", re.IGNORECASE)).first)
+        candidates.insert(1, modal.locator("button").filter(has_text=re.compile(r"(Continue|继续)", re.IGNORECASE)).first)
+        candidates.append(modal.locator("button").first)
+
+    for loc in candidates:
+        try:
+            if await loc.count() == 0:
+                continue
+            if not await loc.is_visible():
+                continue
+            await asyncio.sleep(1.0)
+            await loc.click(timeout=2000, force=True)
+            try:
+                await expect(title).to_be_hidden(timeout=6000)
+                return True
+            except Exception:
+                pass
+        except Exception:
+            continue
+
+    try:
+        for frame in page.frames:
+            try:
+                if not frame.url:
+                    continue
+                if "challenges.cloudflare.com" not in frame.url and "turnstile" not in frame.url and "cloudflare" not in frame.url:
+                    continue
+                btn = frame.get_by_role("button", name=re.compile(r"^(Continue|继续)$", re.IGNORECASE)).first
+                if await btn.count() > 0 and await btn.is_visible():
+                    await asyncio.sleep(1.0)
+                    await btn.click(timeout=2000, force=True)
+                    try:
+                        await expect(title).to_be_hidden(timeout=6000)
+                        return True
+                    except Exception:
+                        pass
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    try:
+        await asyncio.sleep(1.0)
+        await page.keyboard.press("Enter")
+        try:
+            await expect(title).to_be_hidden(timeout=3000)
+            return True
+        except Exception:
+            pass
+
+        for _ in range(12):
+            await page.keyboard.press("Tab")
+            await asyncio.sleep(0.15)
+            await page.keyboard.press("Enter")
+            try:
+                await expect(title).to_be_hidden(timeout=1500)
+                return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    box = None
+    try:
+        if await modal.count() > 0:
+            box = await modal.bounding_box()
+    except Exception:
+        box = None
+
+    if not box:
+        try:
+            box = await page.locator(".mantine-Modal-content, .mantine-Modal-body").first.bounding_box()
+        except Exception:
+            box = None
+
+    if box:
+        points = [
+            (0.5, 0.9),
+            (0.8, 0.9),
+            (0.2, 0.9),
+            (0.5, 0.5),
+        ]
+        for rx, ry in points:
+            try:
+                await asyncio.sleep(0.5)
+                await page.mouse.click(box["x"] + box["width"] * rx, box["y"] + box["height"] * ry)
+                try:
+                    await expect(title).to_be_hidden(timeout=2500)
+                    return True
+                except Exception:
+                    pass
+            except Exception:
+                continue
+
+    try:
+        still = await title.is_visible()
+    except Exception:
+        still = False
+    if still:
+        print(f"{prefix} Security Verification handled failed.")
+    return not still
+
 async def _lovart_close_session_async(index: int = None):
     indices_to_close = []
     if index is not None:
@@ -820,46 +943,9 @@ async def run_generate_video_on_page(page: Page, duration_label: str, start_fram
     click_ts = time.time()
     print(f"[lovart] click generate: {click_ts}")
     await generate_btn.click()
-    
-    # --- Security Verification Check ---
-    # User reported a modal: "Security Verification" with a "Continue" button
-    # Updated logic to be more robust based on user HTML
     try:
-        print(f"{prefix} Checking for Security Verification modal...")
-        # 1. Check for the specific Title
-        security_title = page.locator("h2").filter(has_text="Security Verification").first
-        
-        # We use a try/except block for the wait to avoid crashing if it doesn't appear
-        try:
-            await expect(security_title).to_be_visible(timeout=5000)
-            print(f"{prefix} Security Verification modal detected.")
-            
-            # 2. Find the Continue button
-            # Strategy A: Button with text "Continue"
-            continue_btn = page.locator("button").filter(has_text="Continue").first
-            
-            # Strategy B: Button inside the same modal body if A fails
-            if await continue_btn.count() == 0:
-                 modal_body = page.locator(".mantine-Modal-body").filter(has=security_title).first
-                 continue_btn = modal_body.locator("button").first
-
-            if await continue_btn.is_visible():
-                print(f"{prefix} Waiting 2 seconds before clicking Continue...")
-                await asyncio.sleep(2)
-                print(f"{prefix} Clicking Continue on Security Verification...")
-                await continue_btn.click()
-                await asyncio.sleep(1)
-            else:
-                print(f"{prefix} Continue button not found in Security Verification modal.")
-        except AssertionError:
-            # Title not found within timeout
-            pass
-        except Exception as e:
-            # Other errors (e.g. timeout)
-            pass
-
-    except Exception as e:
-        print(f"{prefix} Security check exception: {e}")
+        await lovart_handle_security_verification(page, prefix=prefix)
+    except Exception:
         pass
 
     try:
@@ -1895,46 +1981,9 @@ async def run_generate_image_on_page(page: Page, start_frame_image_path: str, pr
     click_ts = time.time()
     print(f"{prefix} click generate image: {click_ts}")
     await generate_btn.click()
-    
-    # --- Security Verification Check ---
-    # User reported a modal: "Security Verification" with a "Continue" button
-    # Updated logic to be more robust based on user HTML
     try:
-        print(f"{prefix} Checking for Security Verification modal...")
-        # 1. Check for the specific Title
-        security_title = page.locator("h2").filter(has_text="Security Verification").first
-        
-        # We use a try/except block for the wait to avoid crashing if it doesn't appear
-        try:
-            await expect(security_title).to_be_visible(timeout=5000)
-            print(f"{prefix} Security Verification modal detected.")
-            
-            # 2. Find the Continue button
-            # Strategy A: Button with text "Continue"
-            continue_btn = page.locator("button").filter(has_text="Continue").first
-            
-            # Strategy B: Button inside the same modal body if A fails
-            if await continue_btn.count() == 0:
-                 modal_body = page.locator(".mantine-Modal-body").filter(has=security_title).first
-                 continue_btn = modal_body.locator("button").first
-
-            if await continue_btn.is_visible():
-                print(f"{prefix} Waiting 2 seconds before clicking Continue...")
-                await asyncio.sleep(2)
-                print(f"{prefix} Clicking Continue on Security Verification...")
-                await continue_btn.click()
-                await asyncio.sleep(1)
-            else:
-                print(f"{prefix} Continue button not found in Security Verification modal.")
-        except AssertionError:
-            # Title not found within timeout
-            pass
-        except Exception as e:
-            # Other errors (e.g. timeout)
-            pass
-
-    except Exception as e:
-        print(f"{prefix} Security check exception: {e}")
+        await lovart_handle_security_verification(page, prefix=prefix)
+    except Exception:
         pass
 
     try:
