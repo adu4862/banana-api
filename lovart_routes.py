@@ -804,13 +804,15 @@ def api_generate_image_openai():
         return jsonify({
             "error": {
                 "code": "timeout",
-                "message": "Request timed out or too many retries",
+                "message": "Request timed out or too many retries (Max retries exceeded)",
                 "type": "server_error",
                 "param": None
             }
         }), 500
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({
             "error": {
                 "code": "internal_error",
