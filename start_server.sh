@@ -18,11 +18,11 @@ else
 fi
 
 echo "[INFO] Starting Lovart Backend Server..."
-echo "[INFO] Listening on 0.0.0.0:5000"
+echo "[INFO] Listening on 0.0.0.0:5005"
 
 # 设置环境变量
 export HOST=0.0.0.0
-export PORT=5000
+export PORT=5005
 export DEBUG=False
 export PLAYWRIGHT_BROWSERS_PATH=0
 
