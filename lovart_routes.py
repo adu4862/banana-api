@@ -4,6 +4,7 @@ import asyncio
 import threading
 import os
 import time
+import json
 import importlib.util
 import sys
 
@@ -54,6 +55,82 @@ def _idle_cleanup_loop():
         time.sleep(60)
 
 threading.Thread(target=_idle_cleanup_loop, daemon=True).start()
+
+def _truncate_str(value, limit: int = 200):
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    if len(value) <= limit:
+        return value
+    return value[:limit] + f"...(truncated,{len(value)})"
+
+def _safe_int(value):
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+def _sanitize_payload(obj):
+    sensitive_keys = {
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "password",
+        "passwd",
+        "secret",
+        "token",
+        "access_token",
+        "refresh_token",
+        "api_key",
+        "apikey",
+    }
+
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            lk = str(k).lower()
+            if lk in sensitive_keys or any(s in lk for s in ("token", "secret", "password", "cookie", "authorization", "key")):
+                out[k] = "***"
+            else:
+                out[k] = _sanitize_payload(v)
+        return out
+    if isinstance(obj, list):
+        return [_sanitize_payload(x) for x in obj[:50]]
+    if isinstance(obj, str):
+        return _truncate_str(obj, 400)
+    return obj
+
+def _log_generate_image_request(route_name: str, payload: dict):
+    try:
+        ip = request.headers.get("X-Forwarded-For") or request.remote_addr
+        ua = request.headers.get("User-Agent", "")
+
+        if not isinstance(payload, dict):
+            payload = {"_raw": _truncate_str(payload, 400)}
+
+        start_b64 = payload.get("start_frame_image_base64")
+        assets = payload.get("image_assets")
+        if not isinstance(assets, list):
+            assets = []
+
+        summarized = {
+            "prompt": _truncate_str((payload.get("prompt") or "").strip(), 400),
+            "resolution": _truncate_str((payload.get("resolution") or "").strip(), 50),
+            "ratio": _truncate_str((payload.get("ratio") or "").strip(), 20),
+            "start_frame_image_path": _truncate_str((payload.get("start_frame_image_path") or "").strip(), 260),
+            "start_frame_image_base64_len": len(start_b64) if isinstance(start_b64, str) else 0,
+            "image_assets_count": len(assets),
+            "image_assets_lens": [len(x) for x in assets[:20] if isinstance(x, str)],
+        }
+        summarized = _sanitize_payload(summarized)
+
+        print(
+            f"[lovart_routes] {route_name} ip={_truncate_str(ip, 120)} ua={_truncate_str(ua, 160)} "
+            f"params={json.dumps(summarized, ensure_ascii=False)}"
+        )
+    except Exception as e:
+        print(f"[lovart_routes] {route_name} param log failed: {e}")
 
 def _normalize_duration_label(duration) -> str:
     if duration is None:
@@ -469,6 +546,7 @@ def api_generate_image():
     try:
         # with _lovart_generate_lock: # Removed global lock
         payload = request.get_json(silent=True) or {}
+        _log_generate_image_request("/api/lovart/generate_image", payload)
         start_frame_image_path = (payload.get("start_frame_image_path") or "").strip()
         start_frame_image_base64 = (payload.get("start_frame_image_base64") or "").strip()
         image_assets = payload.get("image_assets") or []
@@ -619,6 +697,7 @@ def api_generate_image_openai():
     temp_file_paths = []
     try:
         payload = request.get_json(silent=True) or {}
+        _log_generate_image_request("/v1/images/generations", payload)
         
         # 1. 解析 OpenAI 参数
         prompt = (payload.get("prompt") or "").strip()
