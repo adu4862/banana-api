@@ -4,7 +4,7 @@ import json
 import os
 
 # 配置
-API_URL = "http://192.168.1.75:5005/v1/images/generations"
+API_URL = "http://192.168.1.159:5005/v1/images/generations"
 IMAGE_PATH = r"H:\BaiduNetdiskDownload\Shuke1130\Shuke\backend\项目\20260112_145033_11111\fusions\fusion_1.jpg"
 PROMPT = "参考图片 画风 生成 [10]. 【近景】。荒野中。2个人, (@江萌)(女性, 20岁)，身穿一件浅蓝色衣衫; (@老夫人)(女性, 60岁)，身穿一件棕褐色衣衫。前者蹲在地上，一手握着后者的手腕，另一只手拿着木钗挑起一只红头黑触角的长虫，眼神严肃认真地看着后者，虫子在木钗尖端扭动，后者看着虫子瞪大眼睛神情惊恐。阴天散射光。微动效果, 固定镜头, 平视, 越肩镜头"
 

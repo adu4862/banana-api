@@ -828,8 +828,15 @@ def lovart_generate_video(index: int, duration_label: str, start_frame_image_pat
     return future.result(timeout=timeout)
 
 # ================= Mail Configuration =================
+import platform
+
 PROXY_HOST = "127.0.0.1"
-PROXY_PORT = 10808
+# Detect OS to set proxy port
+if platform.system().lower() == "darwin": # macOS
+    PROXY_PORT = 7898 # Clash Verge SOCKS port
+else: # Windows or others
+    PROXY_PORT = 10808 # Default Windows port
+
 PROXIES = {
     'http': f'socks5://{PROXY_HOST}:{PROXY_PORT}',
     'https': f'socks5://{PROXY_HOST}:{PROXY_PORT}'
