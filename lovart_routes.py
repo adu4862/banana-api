@@ -532,6 +532,22 @@ def api_generate_video():
                     data.pop("low_points", None)
                 return jsonify({"status": "error", "message": message, "data": data}), 500
 
+            except Exception as e:
+                print(f"[lovart_routes] Exception during generation (Session {idx}): {e}")
+                if idx is not None:
+                    lovart_close_session(idx)
+                    idx = None
+                
+                # Try to recover session pool for next attempt
+                try:
+                    _ensure_lovart_session()
+                except:
+                    pass
+
+                if attempt < max_retries - 1:
+                    continue
+                raise e
+
             finally:
                 if idx is not None:
                     lovart_release_session(idx)
@@ -667,6 +683,22 @@ def api_generate_image():
                 if isinstance(data, dict) and data.get("low_points"):
                     data.pop("low_points", None)
                 return jsonify({"status": "error", "message": message, "data": data}), 500
+
+            except Exception as e:
+                print(f"[lovart_routes] Exception during generation (Session {idx}): {e}")
+                if idx is not None:
+                    lovart_close_session(idx)
+                    idx = None
+                
+                # Try to recover session pool for next attempt
+                try:
+                    _ensure_lovart_session()
+                except:
+                    pass
+
+                if attempt < max_retries - 1:
+                    continue
+                raise e
 
             finally:
                 if idx is not None:
@@ -901,6 +933,22 @@ def api_generate_image_openai():
                         "param": None
                     }
                 }), 500
+
+            except Exception as e:
+                print(f"[lovart_routes] Exception during generation (Session {idx}): {e}")
+                if idx is not None:
+                    lovart_close_session(idx)
+                    idx = None
+                
+                # Try to recover session pool for next attempt
+                try:
+                    _ensure_lovart_session()
+                except:
+                    pass
+
+                if attempt < max_retries - 1:
+                    continue
+                raise e
 
             finally:
                 if idx is not None:
