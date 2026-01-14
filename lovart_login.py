@@ -26,6 +26,56 @@ from playwright.async_api import Page, expect
 
 import os
 import sys
+import uuid
+import requests
+from qiniu import Auth, put_data, put_file
+
+# 七牛云配置
+QINIU_ACCESS_KEY = os.getenv('QINIU_ACCESS_KEY', 'YrFo8wwXHr1G2T150slBn5pHd-adC7o91UZHlgYU')
+QINIU_SECRET_KEY = os.getenv('QINIU_SECRET_KEY', 'fiUUq52QQRMBwTJkZfUb1KYcF6d6FFTrHOn78_Pr')
+QINIU_BUCKET_NAME = os.getenv('QINIU_BUCKET_NAME', 'manga-adu')
+QINIU_CDN_DOMAIN = os.getenv('QINIU_DOMAIN', 'http://cdn2.manfanfan.com').strip()
+
+def upload_image_to_qiniu(image_url: str) -> str:
+    """
+    下载图片并上传到七牛云，返回 CDN 地址
+    """
+    try:
+        # 1. 下载图片
+        print(f"[lovart] Downloading image from: {image_url}")
+        resp = requests.get(image_url, timeout=30)
+        if resp.status_code != 200:
+            print(f"[lovart] Failed to download image: {resp.status_code}")
+            return image_url # Fallback to original URL
+        
+        image_data = resp.content
+        
+        # 2. 构建文件名
+        # 使用 UUID 防止冲突，保持后缀
+        ext = ".png" # 默认为 png
+        if ".jpg" in image_url or ".jpeg" in image_url:
+            ext = ".jpg"
+        
+        key = f"agent_images/{uuid.uuid4()}{ext}"
+        
+        # 3. 上传七牛云
+        print(f"[lovart] Uploading to Qiniu: {key}")
+        q = Auth(QINIU_ACCESS_KEY, QINIU_SECRET_KEY)
+        token = q.upload_token(QINIU_BUCKET_NAME, key, 3600)
+        
+        ret, info = put_data(token, key, image_data)
+        
+        if info.status_code == 200:
+            cdn_url = f"{QINIU_CDN_DOMAIN}/{key}"
+            print(f"[lovart] Upload success. CDN URL: {cdn_url}")
+            return cdn_url
+        else:
+            print(f"[lovart] Qiniu upload failed: {info.text_body}")
+            return image_url # Fallback
+            
+    except Exception as e:
+        print(f"[lovart] Upload to Qiniu error: {e}")
+        return image_url # Fallback
 
 def setup_playwright_env():
     """
@@ -70,7 +120,7 @@ def setup_playwright_env():
 init()
 
 # Configuration: Number of concurrent browser sessions
-_LOVART_POOL_SIZE = int(os.environ.get("LOVART_POOL_SIZE", 3))
+_LOVART_POOL_SIZE = int(os.environ.get("LOVART_POOL_SIZE", 6))
 
 _lovart_sessions_lock = Lock() # Protects access to the _lovart_sessions list structure
 _lovart_sessions = []
@@ -943,7 +993,7 @@ async def register_lovart_account(keep_alive_after_code: bool = False, ready_eve
         
         # Launch Camoufox
         # headless=True by default, can be configured
-        async with AsyncCamoufox(headless=True) as browser:
+        async with AsyncCamoufox(headless=False) as browser:
             # Create context with viewport 1080x1920
             try:
                 context = await browser.new_context(
@@ -1640,11 +1690,19 @@ async def run_generate_image_on_page(page: Page, start_frame_image_path: str, pr
          # Try to find the latest image on canvas?
          # This might be complex without specific selectors.
          pass
-         
+    
+    # Upload to Qiniu if we have a URL
+    final_url = result["image_url"]
+    if final_url:
+        print(f"{prefix} Found image URL, uploading to Qiniu...")
+        cdn_url = upload_image_to_qiniu(final_url)
+        if cdn_url:
+            final_url = cdn_url
+            
     return True, "图片生成完成", {
         "points": points,
         "start_frame_image_path": start_frame_image_path,
-        "image_url": result["image_url"]
+        "image_url": final_url
     }
 
 async def _lovart_generate_image_async(index: int, page: Page, start_frame_image_path: str, prompt: str, resolution: str = "2K", ratio: str = "16:9", image_paths: list = None):

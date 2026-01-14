@@ -39,6 +39,7 @@ except ImportError:
 
 # Create Blueprint
 lovart_bp = Blueprint('lovart', __name__, url_prefix='/api/lovart')
+openai_bp = Blueprint('openai', __name__, url_prefix='/v1')
 
 # _lovart_generate_lock removed
 _lovart_init_lock = threading.Lock()
@@ -306,7 +307,7 @@ def _run_generate_video(index: int, duration_label: str, start_frame_image_path:
         prompt=prompt,
     )
 
-def _run_generate_image(index: int, start_frame_image_path: str, prompt: str, resolution: str = "2K", ratio: str = "16:9"):
+def _run_generate_image(index: int, start_frame_image_path: str, prompt: str, resolution: str = "2K", ratio: str = "16:9", image_paths: list = None):
     if _is_lovart_hot_reload_enabled():
         loop, page = lovart_get_session_by_index(index)
         if not loop or not page:
@@ -321,6 +322,7 @@ def _run_generate_image(index: int, start_frame_image_path: str, prompt: str, re
             run_fn(
                 page=page,
                 start_frame_image_path=start_frame_image_path,
+                image_paths=image_paths,
                 prompt=prompt,
                 resolution=resolution,
                 ratio=ratio,
@@ -335,7 +337,8 @@ def _run_generate_image(index: int, start_frame_image_path: str, prompt: str, re
         start_frame_image_path=start_frame_image_path,
         prompt=prompt,
         resolution=resolution,
-        ratio=ratio
+        ratio=ratio,
+        image_paths=image_paths
     )
 
 @lovart_bp.route('/register', methods=['POST'])
@@ -603,7 +606,7 @@ def api_generate_image():
                 except:
                     pass
 
-@lovart_bp.route('/v1/images/generations', methods=['POST'])
+@openai_bp.route('/images/generations', methods=['POST'])
 def api_generate_image_openai():
     """
     OpenAI 兼容的生图接口
@@ -738,16 +741,6 @@ def api_generate_image_openai():
                 }), 503
             
             try:
-                # 兼容旧逻辑：如果 final_image_paths 只有一个元素，传给 start_frame_image_path
-                # 如果有多个，需要修改 lovart_generate_image 支持列表
-                # 这里我们假设 lovart_login.py 会修改为支持 image_paths 参数
-                # 为了不破坏签名，我们传递一个特殊参数或者修改签名
-                
-                # 暂时只传第一个作为 start_frame_image_path，后续在 _run_generate_image 中处理
-                # 或者直接修改 _run_generate_image 签名
-                
-                # 由于 _run_generate_image 是本文件的函数，我们可以直接改
-                
                 success, message, data = _run_generate_image(
                     index=idx,
                     start_frame_image_path=final_image_paths[0] if final_image_paths else "",
