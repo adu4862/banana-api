@@ -108,7 +108,7 @@ def create_bitbrowser_window(name_prefix="Lovart-Auto", proxy_info=None):
         "platform": "Other", # Generic platform
         "name": f"{name_prefix}-{int(time.time())}",
         "remark": "Created by Lovart Script",
-        "url": "https://www.lovart.ai/zh", # Default URL
+        "url": "", # Default URL
         "proxyMethod": 2, # 2 = Custom Proxy, 3 = Extract IP
         "proxyType": "noproxy", # Default to no proxy, can be updated if proxy_info provided
         "browserFingerPrint": {
@@ -1298,7 +1298,11 @@ async def register_lovart_account(keep_alive_after_code: bool = False, ready_eve
         ws_endpoint = open_bitbrowser(browser_id)
         if not ws_endpoint:
              print("Failed to open BitBrowser. Retrying...")
-             # If open failed, the ID might be deleted or invalid. Clear it to force creation next time.
+             # If open failed, the ID might be deleted or invalid.
+             # Try to delete it to ensure we don't leave a zombie record/window if it partially opened
+             delete_bitbrowser_window(browser_id)
+             
+             # Clear ID to force creation next time
              if session_index < len(BITBROWSER_IDS):
                  BITBROWSER_IDS[session_index] = None
              retry_count += 1
@@ -1509,6 +1513,8 @@ async def register_lovart_account(keep_alive_after_code: bool = False, ready_eve
                              except:
                                  print("Could not list buttons.")
                              await page.screenshot(path="debug_final_fail.png")
+                             close_bitbrowser_api(browser_id)
+                             delete_bitbrowser_window(browser_id)
                              return False, "Could not find email input", {}
 
                     try:
@@ -1518,6 +1524,13 @@ async def register_lovart_account(keep_alive_after_code: bool = False, ready_eve
                         email, token = get_temp_email()
                         if not email:
                             print("Could not get email. Retrying...")
+                            
+                            # Cleanup before retry
+                            close_bitbrowser_api(browser_id)
+                            delete_bitbrowser_window(browser_id)
+                            if session_index < len(BITBROWSER_IDS):
+                                BITBROWSER_IDS[session_index] = None
+                                
                             retry_count += 1
                             continue
                         
@@ -1551,6 +1564,8 @@ async def register_lovart_account(keep_alive_after_code: bool = False, ready_eve
                                  buttons = await page.locator('button').all_inner_texts()
                                  print(f"All buttons: {buttons}")
                                  await page.screenshot(path="debug_get_code_fail.png")
+                                 close_bitbrowser_api(browser_id)
+                                 delete_bitbrowser_window(browser_id)
                                  return False, "Get Code button not visible", {}
                         else:
                             print("Get Code button not found.")
@@ -1558,6 +1573,8 @@ async def register_lovart_account(keep_alive_after_code: bool = False, ready_eve
                             buttons = await page.locator('button').all_inner_texts()
                             print(f"All buttons: {buttons}")
                             await page.screenshot(path="debug_get_code_fail.png")
+                            close_bitbrowser_api(browser_id)
+                            delete_bitbrowser_window(browser_id)
                             return False, "Get Code button not found", {}
                             
                         # Wait and Poll for Code
@@ -1600,6 +1617,13 @@ async def register_lovart_account(keep_alive_after_code: bool = False, ready_eve
                             except Exception as e:
                                 msg = f"登陆后页面初始化失败: {e}"
                                 print(f"{msg}. Retrying...")
+                                
+                                # Cleanup before retry
+                                close_bitbrowser_api(browser_id)
+                                delete_bitbrowser_window(browser_id)
+                                if session_index < len(BITBROWSER_IDS):
+                                    BITBROWSER_IDS[session_index] = None
+                                    
                                 retry_count += 1
                                 continue
                                 # if ready_payload is not None:
@@ -1636,15 +1660,26 @@ async def register_lovart_account(keep_alive_after_code: bool = False, ready_eve
                                 
                         else:
                             print("Failed to receive code.")
+                            close_bitbrowser_api(browser_id)
+                            delete_bitbrowser_window(browser_id)
                             return False, "Failed to receive code", {}
                             
                     except Exception as e:
                         print(f"Email input interaction failed: {e}")
+                        close_bitbrowser_api(browser_id)
+                        delete_bitbrowser_window(browser_id)
                         return False, f"Email input interaction failed: {e}", {}
                 except Exception as e:
                      print(f"Inner loop exception: {e}")
                      import traceback
                      traceback.print_exc()
+                     
+                     # Cleanup before retry
+                     close_bitbrowser_api(browser_id)
+                     delete_bitbrowser_window(browser_id)
+                     if session_index < len(BITBROWSER_IDS):
+                         BITBROWSER_IDS[session_index] = None
+                         
                      retry_count += 1
                      continue
 
@@ -1652,6 +1687,13 @@ async def register_lovart_account(keep_alive_after_code: bool = False, ready_eve
                 print(f"{Fore.RED}Error in automation loop: {e}{Style.RESET_ALL}")
                 import traceback
                 traceback.print_exc()
+                
+                # Cleanup before retry
+                close_bitbrowser_api(browser_id)
+                delete_bitbrowser_window(browser_id)
+                if session_index < len(BITBROWSER_IDS):
+                    BITBROWSER_IDS[session_index] = None
+                    
                 retry_count += 1
                 continue
             
