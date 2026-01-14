@@ -542,6 +542,9 @@ async def _lovart_close_session_async(index: int = None):
             close_bitbrowser_api(bitbrowser_id)
             # IMPORTANT: Delete the window to free up the 10-window limit for free users
             delete_bitbrowser_window(bitbrowser_id)
+            # Reset the global ID mapping so next time we create a new one
+            if idx < len(BITBROWSER_IDS):
+                BITBROWSER_IDS[idx] = None
         else:
             # Fallback for standard playwright cleanup if any
             try:
@@ -1155,9 +1158,9 @@ async def register_lovart_account(keep_alive_after_code: bool = False, ready_eve
              print("Error: BITBROWSER_IDS not configured.")
              return False, "BitBrowser IDs not configured", {}
 
-        # Auto-create if ID is a placeholder or invalid format (simple heuristic)
-        if browser_id and (browser_id.startswith("browser_id_") or "你的窗口ID" in browser_id):
-            print(f"⚠️ Detected placeholder ID '{browser_id}'. Attempting to auto-create a new BitBrowser window...")
+        # Auto-create if ID is None, placeholder or invalid format (simple heuristic)
+        if not browser_id or (isinstance(browser_id, str) and (browser_id.startswith("browser_id_") or "你的窗口ID" in browser_id)):
+            print(f"⚠️ Detected invalid or missing ID '{browser_id}'. Attempting to auto-create a new BitBrowser window...")
             new_id = create_bitbrowser_window(name_prefix=f"Lovart-Sess-{session_index}")
             if new_id:
                 browser_id = new_id
@@ -1175,6 +1178,9 @@ async def register_lovart_account(keep_alive_after_code: bool = False, ready_eve
         ws_endpoint = open_bitbrowser(browser_id)
         if not ws_endpoint:
              print("Failed to open BitBrowser. Retrying...")
+             # If open failed, the ID might be deleted or invalid. Clear it to force creation next time.
+             if session_index < len(BITBROWSER_IDS):
+                 BITBROWSER_IDS[session_index] = None
              retry_count += 1
              await asyncio.sleep(5)
              continue
@@ -1228,6 +1234,8 @@ async def register_lovart_account(keep_alive_after_code: bool = False, ready_eve
                             # Close this session attempt properly
                             close_bitbrowser_api(browser_id)
                             delete_bitbrowser_window(browser_id) # Free up quota
+                            if session_index < len(BITBROWSER_IDS):
+                                BITBROWSER_IDS[session_index] = None # Clear ID to force new creation
                             continue 
                         else:
                             print(f"Points sufficient ({points}). Reusing session.")
