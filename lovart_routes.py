@@ -702,11 +702,21 @@ def api_generate_image_openai():
 
         ensure_err = _ensure_lovart_session()
         if ensure_err:
+             # _ensure_lovart_session returns (response, status_code)
+             resp, _ = ensure_err
+             msg = "Session init failed"
+             try:
+                 data = resp.get_json()
+                 if data and "message" in data:
+                     msg = data["message"]
+             except:
+                 pass
+
              # 将原有错误格式转换为 OpenAI 格式
              return jsonify({
                 "error": {
                     "code": "server_error",
-                    "message": ensure_err.json.get("message", "Session init failed"),
+                    "message": msg,
                     "type": "server_error",
                     "param": None
                 }
