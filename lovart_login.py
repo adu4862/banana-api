@@ -993,7 +993,7 @@ async def register_lovart_account(keep_alive_after_code: bool = False, ready_eve
         
         # Launch Camoufox
         # headless=True by default, can be configured
-        async with AsyncCamoufox(headless=False) as browser:
+        async with AsyncCamoufox(headless=True) as browser:
             # Create context with viewport 1080x1920
             try:
                 context = await browser.new_context(
