@@ -6,7 +6,7 @@ import os
 # 配置
 import sys
 # 优先使用环境变量，其次尝试从命令行参数获取 IP，最后默认
-DEFAULT_API_HOST = "192.168.1.159"
+DEFAULT_API_HOST = "192.168.1.37"
 if len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
     # 如果运行 python test_image_gen.py 192.168.1.75
     API_HOST = sys.argv[1]
@@ -39,15 +39,17 @@ def test_generate_image():
     payload = {
         "model": "lovart",
         "prompt": PROMPT,
-        "size": "1024x1024" # 对应 1:1，你可以根据需要修改
+        "size": "1024x1024",
+        "quality": os.environ.get("QUALITY", "2K")
     }
     
     # 读取图片并添加到 Payload
     base64_img = get_image_base64(IMAGE_PATH)
     if base64_img:
         print(f"图片已转换为 Base64 (长度: {len(base64_img)})")
-        # 使用 image_assets 数组 (推荐方式)
-        payload["image_assets"] = [base64_img]
+        payload["user"] = base64_img
+        if os.environ.get("PASS_IMAGE_ASSETS", "").strip() in ("1", "true", "yes", "on"):
+            payload["image_assets"] = [base64_img]
     else:
         print("警告: 未找到参考图，将仅使用 Prompt 生成")
     

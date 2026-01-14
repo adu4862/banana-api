@@ -110,6 +110,7 @@ def _log_generate_image_request(route_name: str, payload: dict):
             payload = {"_raw": _truncate_str(payload, 400)}
 
         start_b64 = payload.get("start_frame_image_base64")
+        user_field = payload.get("user")
         assets = payload.get("image_assets")
         if not isinstance(assets, list):
             assets = []
@@ -120,6 +121,7 @@ def _log_generate_image_request(route_name: str, payload: dict):
             "ratio": _truncate_str((payload.get("ratio") or "").strip(), 20),
             "start_frame_image_path": _truncate_str((payload.get("start_frame_image_path") or "").strip(), 260),
             "start_frame_image_base64_len": len(start_b64) if isinstance(start_b64, str) else 0,
+            "user_len": len(user_field) if isinstance(user_field, str) else 0,
             "image_assets_count": len(assets),
             "image_assets_lens": [len(x) for x in assets[:20] if isinstance(x, str)],
         }
@@ -702,11 +704,13 @@ def api_generate_image_openai():
         # 1. 解析 OpenAI 参数
         prompt = (payload.get("prompt") or "").strip()
         size = (payload.get("size") or "1024x1024").strip()
+        quality = (payload.get("quality") or "").strip()
         
         # 扩展参数：支持多图上传
         # 兼容 start_frame_image_base64 (单图) 和 image_assets (多图数组)
         start_frame_image_base64 = (payload.get("start_frame_image_base64") or "").strip()
         image_assets = payload.get("image_assets") or []
+        user_field = payload.get("user")
         
         # 如果提供了单图字段，且没有提供数组，则将其放入数组
         if start_frame_image_base64 and not image_assets:
@@ -715,6 +719,25 @@ def api_generate_image_openai():
         # 确保 image_assets 是列表
         if not isinstance(image_assets, list):
             image_assets = []
+
+        if not image_assets and isinstance(user_field, str):
+            uf = user_field.strip()
+            if uf.startswith("{") or uf.startswith("["):
+                try:
+                    parsed = json.loads(uf)
+                    if isinstance(parsed, dict):
+                        parsed_assets = parsed.get("image_assets")
+                        parsed_b64 = parsed.get("start_frame_image_base64")
+                        if isinstance(parsed_assets, list) and parsed_assets:
+                            image_assets = parsed_assets
+                        elif isinstance(parsed_b64, str) and parsed_b64.strip():
+                            image_assets = [parsed_b64.strip()]
+                    elif isinstance(parsed, list) and parsed:
+                        image_assets = parsed
+                except Exception:
+                    pass
+            if not image_assets and len(uf) >= 200:
+                image_assets = [uf]
         
         # 映射 Size 到 Ratio
         ratio = "1:1" # 默认 1024x1024
@@ -729,6 +752,10 @@ def api_generate_image_openai():
         
         # 固定分辨率为 2K (Lovart 默认质量较高)
         resolution = "2K"
+        if quality:
+            q = quality.strip().upper()
+            if q in ("1K", "2K", "4K"):
+                resolution = q
 
         missing = []
         if not prompt:
