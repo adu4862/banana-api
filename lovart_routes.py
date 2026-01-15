@@ -7,6 +7,8 @@ import time
 import json
 import importlib.util
 import sys
+import re
+import requests
 
 # Try to import from backend package first, then fallback to local/root import
 try:
@@ -808,6 +810,66 @@ def api_generate_image_openai():
         import uuid
         
         final_image_paths = []
+
+        # 0. Check for images in prompt
+        if not image_assets and not start_frame_image_base64 and prompt:
+             urls = re.findall(r'`?(https?://[^`\s]+)`?', prompt)
+             if urls:
+                 print(f"[lovart_routes] Extracted {len(urls)} URLs from prompt: {urls}")
+                 
+                 # Clean prompt by removing URLs and their surrounding backticks
+                 cleaned_prompt = prompt
+                 for url in urls:
+                     # Escape url for regex and handle optional backticks
+                     escaped_url = re.escape(url)
+                     # Replace `url` or url with empty string
+                     cleaned_prompt = re.sub(r'`?' + escaped_url + r'`?', '', cleaned_prompt)
+                 
+                 # Clean up extra spaces
+                 cleaned_prompt = re.sub(r'\s+', ' ', cleaned_prompt).strip()
+                 print(f"[lovart_routes] Cleaned prompt: {cleaned_prompt}")
+                 prompt = cleaned_prompt
+                 
+                 temp_dir = tempfile.gettempdir()
+                 
+                 # Configure retry strategy
+                 from requests.adapters import HTTPAdapter
+                 from urllib3.util.retry import Retry
+                 
+                 session = requests.Session()
+                 retry = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+                 adapter = HTTPAdapter(max_retries=retry)
+                 session.mount('http://', adapter)
+                 session.mount('https://', adapter)
+                 
+                 # Bypass proxies
+                 proxies = {
+                     "http": None,
+                     "https": None,
+                 }
+
+                 for url in urls:
+                     try:
+                         url = url.strip()
+                         if not url: continue
+                         print(f"[lovart_routes] Downloading image from prompt: {url}")
+                         r = session.get(url, timeout=60, proxies=proxies)
+                         if r.status_code == 200:
+                             ext = ".png"
+                             ct = r.headers.get("Content-Type", "").lower()
+                             if "jpeg" in ct or "jpg" in ct:
+                                 ext = ".jpg"
+                             elif ".jpg" in url or ".jpeg" in url:
+                                 ext = ".jpg"
+                             
+                             temp_filename = f"lovart_prompt_img_{uuid.uuid4()}{ext}"
+                             t_path = os.path.join(temp_dir, temp_filename)
+                             with open(t_path, "wb") as f:
+                                 f.write(r.content)
+                             temp_file_paths.append(t_path)
+                             final_image_paths.append(t_path)
+                     except Exception as e:
+                         print(f"[lovart_routes] Failed to download {url}: {e}")
         
         if image_assets:
             temp_dir = tempfile.gettempdir()

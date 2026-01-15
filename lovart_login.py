@@ -1833,7 +1833,14 @@ async def run_generate_image_on_page(page: Page, start_frame_image_path: str, pr
         # Upload multiple files at once if supported, or verify if Lovart supports multiple selection
         # Assuming set_files supports list for multiple files
         await file_chooser.set_files(all_images)
-        await asyncio.sleep(1)
+        
+        # Wait for upload to complete (simple delay + network idle check)
+        print(f"{prefix} Waiting for image upload to complete...")
+        await asyncio.sleep(5)
+        try:
+             await page.wait_for_load_state("networkidle", timeout=3000)
+        except:
+             pass
 
     # 3. Resolution & Ratio
     print(f"[lovart] Setting Resolution={resolution}, Ratio={ratio}...")
