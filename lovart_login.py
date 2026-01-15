@@ -254,7 +254,7 @@ for _ in range(_LOVART_POOL_SIZE):
         "bitbrowser_id": None, 
     })
 
-_LOVART_VIEWPORT = {"width": 1920, "height": 1080}
+_LOVART_VIEWPORT = {"width": 1280, "height": 720}
 
 def lovart_get_pool_size() -> int:
     return _LOVART_POOL_SIZE
@@ -520,161 +520,151 @@ async def lovart_scroll_canvas_up(page: Page, pixels: int = 100):
         return False
 
 async def lovart_handle_security_verification(page: Page, prefix: str = "[lovart]"):
-    title = page.locator("h2").filter(has_text=re.compile(r"(Security Verification|安全验证)", re.IGNORECASE)).first
+    """
+    通用处理 Security Verification / Cloudflare 验证弹窗
+    策略：不依赖具体 class，而是依赖 role、text 和结构
+    """
+    # 1. 检测弹窗是否存在
+    # 使用正则匹配标题，忽略大小写
+    # 定位策略：查找包含 "Security Verification" 或 "安全验证" 标题的 Dialog 或 容器
     try:
-        await expect(title).to_be_visible(timeout=5000)
+        # 也可以直接找 role="dialog" 且可见的元素
+        modal = page.locator('section[role="dialog"]').filter(has_text=re.compile(r"Security Verification|安全验证", re.IGNORECASE)).first
+        if await modal.count() == 0:
+            # 备用：如果没有 standard dialog role，找标题所在的任何容器
+            header = page.locator("h2, h3, div").filter(has_text=re.compile(r"^\s*(Security Verification|安全验证)\s*$", re.IGNORECASE)).first
+            if await header.count() == 0 or not await header.is_visible():
+                return False
+            # 获取标题的外层容器 (通常是弹窗主体)
+            modal = header.locator("xpath=./ancestor::div[contains(@class, 'Modal') or count(*) > 3][1]")
     except Exception:
         return False
 
-    print(f"{prefix} Security Verification modal detected.")
+    if not await modal.is_visible():
+        return False
 
-    # 优先尝试：基于物理坐标的模拟点击（用户推荐）
-    # 定位外层容器 div (class 包含 font-inter flex h-10 w-full)
-    # 获取 Bounding Box 并点击中心
-    try:
-        # 尝试更精确的定位，包含 items-center 等类名以确保唯一性
-        target_selector = "div.font-inter.flex.h-10.w-full.items-center.justify-center"
-        container = page.locator(target_selector).first
+    print(f"{prefix} 🛡️ Security Verification modal detected.")
+
+    # 2. 处理 Cloudflare Turnstile (确保获取到 Token)
+    # Cloudflare 的 input name 通常固定为 cf-turnstile-response
+    cf_input = modal.locator('input[name="cf-turnstile-response"]').first
+    if await cf_input.count() == 0:
+        # 尝试全局搜索
+        cf_input = page.locator('input[name="cf-turnstile-response"]').first
+
+    start_time = time.time()
+    token_found = False
+    
+    # 尝试最多 10 秒等待 Token 出现
+    while time.time() - start_time < 10:
+        if await cf_input.count() > 0:
+            val = await cf_input.get_attribute("value")
+            if val and len(val) > 20:
+                print(f"{prefix} ✅ Turnstile token found. Ready to continue.")
+                token_found = True
+                break
         
-        # 如果找不到，尝试稍微宽泛一点的
-        if await container.count() == 0:
-            target_selector = "div.font-inter.flex.h-10.w-full"
-            container = page.locator(target_selector).first
+        # 如果没有 token，尝试点击 Widget
+        # Widget 通常在一个 iframe 里，或者是一个 div 容器
+        # 策略：找到 input 的父级 iframe 或 div 并点击
+        print(f"{prefix} ⏳ Waiting for Turnstile... attempting to activate widget.")
+        
+        # 尝试1: 点击 iframe (如果存在)
+        frames = page.frames
+        clicked_frame = False
+        for frame in frames:
+            if "cloudflare" in frame.url or "turnstile" in frame.url:
+                try:
+                    # 点击 iframe 内部的 checkbox 或 body
+                    cb = frame.locator("input[type='checkbox']").first
+                    if await cb.count() > 0:
+                        await cb.click(force=True)
+                        clicked_frame = True
+                    else:
+                        await frame.locator("body").click(force=True)
+                        clicked_frame = True
+                except:
+                    pass
+        
+        # 尝试2: 如果没有 iframe，点击 input 附近的容器
+        if not clicked_frame and await cf_input.count() > 0:
+            try:
+                # 点击 input 的父级 div (通常是 widget wrapper)
+                wrapper = cf_input.locator("xpath=..").first
+                if await wrapper.is_visible():
+                     await wrapper.click(force=True)
+                else:
+                     # 再往上一层
+                     await cf_input.locator("xpath=../..").first.click(force=True)
+            except:
+                pass
+        
+        await asyncio.sleep(1)
 
-        if await container.count() > 0:
-            # 确保它是可见的
-            if await container.is_visible():
-                box = await container.bounding_box()
-                if box:
-                    print(f"{prefix} Found Continue container at {box}. Clicking center...")
-                    # 移动鼠标并点击
-                    await page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-                    await asyncio.sleep(0.2)
-                    await page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-                    
-                    # 等待验证通过
-                    try:
-                        await expect(title).to_be_hidden(timeout=3000)
-                        print(f"{prefix} Security Verification passed via coordinate click.")
-                        return True
-                    except Exception:
-                        pass
-    except Exception as e:
-        print(f"{prefix} Coordinate click attempt failed: {e}")
-
-    modal = title.locator('xpath=ancestor::*[contains(@class,"mantine-Modal-content") or contains(@class,"mantine-Modal-body")][1]').first
-
-    shadow_host_selector = "div.font-inter.flex.h-10.w-full.items-center.justify-center.rounded-lg.text-center.font-normal.text-white.transition-colors"
-
-    candidates = [
-        modal.locator(shadow_host_selector).first if await modal.count() > 0 else page.locator(shadow_host_selector).first,
-        page.get_by_role("button", name=re.compile(r"^(Continue|继续)$", re.IGNORECASE)).first,
-        page.locator("button").filter(has_text=re.compile(r"(Continue|继续)", re.IGNORECASE)).first,
+    # 3. 点击 "Continue" 按钮
+    # 策略：在 modal 内部寻找带有 Continue/继续 文本的按钮
+    # 只要弹窗还在，就反复尝试点击
+    
+    print(f"{prefix} 👆 Attempting to click Continue...")
+    
+    # 定义按钮查找器列表 (优先级从高到低)
+    button_locators = [
+        # 1. 精确匹配文字的按钮
+        modal.locator('button').filter(has_text=re.compile(r"^\s*(Continue|继续)\s*$", re.IGNORECASE)),
+        # 2. 包含文字的按钮
+        modal.locator('button').filter(has_text=re.compile(r"(Continue|继续)", re.IGNORECASE)),
+        # 3. 任何看起来像按钮的 div (有文字且居中) - 针对你提供的 HTML 中的结构
+        modal.locator('div, a').filter(has_text=re.compile(r"^\s*(Continue|继续)\s*$", re.IGNORECASE)).filter(has=page.locator("xpath=self::*[contains(@class, 'cursor-pointer') or contains(@class, 'btn') or contains(@class, 'text-center')]")),
+        # 4. 最后的手段：弹窗里唯一的那个大按钮 (通常是最后一个按钮)
+        modal.locator('button').last, 
     ]
 
-    if await modal.count() > 0:
-        candidates.insert(0, modal.locator(shadow_host_selector).first)
-        candidates.insert(0, modal.get_by_role("button", name=re.compile(r"^(Continue|继续)$", re.IGNORECASE)).first)
-        candidates.insert(1, modal.locator("button").filter(has_text=re.compile(r"(Continue|继续)", re.IGNORECASE)).first)
-        candidates.append(modal.locator("button").first)
-
-    for loc in candidates:
-        try:
-            if await loc.count() == 0:
-                continue
-            if not await loc.is_visible():
-                continue
-            await asyncio.sleep(1.0)
-            await loc.click(timeout=2000, force=True)
-            try:
-                await expect(title).to_be_hidden(timeout=6000)
-                return True
-            except Exception:
-                pass
-        except Exception:
-            continue
-
-    try:
-        for frame in page.frames:
-            try:
-                if not frame.url:
-                    continue
-                if "challenges.cloudflare.com" not in frame.url and "turnstile" not in frame.url and "cloudflare" not in frame.url:
-                    continue
-                btn = frame.get_by_role("button", name=re.compile(r"^(Continue|继续)$", re.IGNORECASE)).first
-                if await btn.count() > 0 and await btn.is_visible():
-                    await asyncio.sleep(1.0)
-                    await btn.click(timeout=2000, force=True)
-                    try:
-                        await expect(title).to_be_hidden(timeout=6000)
-                        return True
-                    except Exception:
-                        pass
-            except Exception:
-                continue
-    except Exception:
-        pass
-
-    try:
-        await asyncio.sleep(1.0)
-        await page.keyboard.press("Enter")
-        try:
-            await expect(title).to_be_hidden(timeout=3000)
+    for _ in range(5): # 最多尝试 5 轮点击
+        if not await modal.is_visible():
+            print(f"{prefix} ✅ Modal closed.")
             return True
-        except Exception:
-            pass
 
-        for _ in range(12):
-            await page.keyboard.press("Tab")
-            await asyncio.sleep(0.15)
-            await page.keyboard.press("Enter")
+        clicked = False
+        for loc in button_locators:
             try:
-                await expect(title).to_be_hidden(timeout=1500)
-                return True
+                if await loc.count() > 0 and await loc.first.is_visible():
+                    # 确保它是启用的
+                    if await loc.first.is_disabled():
+                        print(f"{prefix} Button disabled, waiting...")
+                        await asyncio.sleep(0.5)
+                        continue
+                    
+                    # 尝试多种点击方式
+                    btn = loc.first
+                    # 1. JS Click (最稳，无视遮挡)
+                    await btn.evaluate("e => e.click()")
+                    # 2. 物理点击 (作为补充)
+                    try:
+                        await btn.click(timeout=500, force=True) 
+                    except: 
+                        pass
+                    
+                    clicked = True
+                    print(f"{prefix} Clicked button: {await btn.inner_text()}")
+                    break # 这一轮点到了就不试其他 selector 了
             except Exception:
                 continue
-    except Exception:
-        pass
-
-    box = None
-    try:
-        if await modal.count() > 0:
-            box = await modal.bounding_box()
-    except Exception:
-        box = None
-
-    if not box:
+        
+        if not clicked:
+            # 如果没找到按钮，可能是 DOM 还没渲染完，或者按钮在 shadow root 里
+            print(f"{prefix} No button found yet...")
+        
+        # 检查是否消失
         try:
-            box = await page.locator(".mantine-Modal-content, .mantine-Modal-body").first.bounding_box()
-        except Exception:
-            box = None
-
-    if box:
-        points = [
-            (0.5, 0.9),
-            (0.8, 0.9),
-            (0.2, 0.9),
-            (0.5, 0.5),
-        ]
-        for rx, ry in points:
-            try:
-                await asyncio.sleep(0.5)
-                await page.mouse.click(box["x"] + box["width"] * rx, box["y"] + box["height"] * ry)
-                try:
-                    await expect(title).to_be_hidden(timeout=2500)
-                    return True
-                except Exception:
-                    pass
-            except Exception:
-                continue
-
-    try:
-        still = await title.is_visible()
-    except Exception:
-        still = False
-    if still:
-        print(f"{prefix} Security Verification handled failed.")
-    return not still
+            await expect(modal).to_be_hidden(timeout=1500)
+            print(f"{prefix} ✅ Verification passed.")
+            return True
+        except:
+            # 还在，继续下一轮
+            pass
+            
+    # 如果还是没消失，返回失败
+    return not await modal.is_visible()
 
 async def _lovart_close_session_async(index: int = None):
     indices_to_close = []
@@ -1842,6 +1832,270 @@ async def run_generate_image_on_page(page: Page, start_frame_image_path: str, pr
         except:
              pass
 
+    # ---------------------------------------------------------
+    # NEW: Reverse Engineering API Implementation
+    # ---------------------------------------------------------
+    
+    # Init result container (Same as old code)
+    result = {
+        "image_url": None,
+        "cover_url": None,
+        "network_hits": [],
+    }
+    
+    print(f"{prefix} [API MODE] Starting direct API generation...")
+
+    # 1. Get Project ID
+    import urllib.parse
+    project_id = None
+    try:
+        parsed = urllib.parse.urlparse(page.url)
+        project_id = urllib.parse.parse_qs(parsed.query).get('projectId', [None])[0]
+    except Exception as e:
+        print(f"{prefix} Failed to parse URL for projectId: {e}")
+
+    # 2. Get Token
+    cookies = await page.context.cookies()
+    token = next((c['value'] for c in cookies if c['name'] == 'usertoken'), None)
+    
+    if not project_id:
+        print(f"{prefix} ⚠️ Project ID not found in URL. Attempting to fetch from local storage or wait...")
+        # Fallback: could try to execute script to get it
+    
+    # 3. Get Uploaded Image URL
+    # We uploaded images using UI above. Now we need to find their URLs in the DOM.
+    target_image_url = None
+    if start_frame_image_path or image_paths:
+        print(f"{prefix} Searching for uploaded image URL in DOM...")
+        for _ in range(15):
+             # Look for images in artifacts/user path
+             imgs = await page.locator('img[src*="/artifacts/user/"]').all()
+             if imgs:
+                 # Get the last one as it's likely the one we just uploaded
+                 target_image_url = await imgs[-1].get_attribute("src")
+                 print(f"{prefix} Found uploaded image: {target_image_url}")
+                 break
+             await asyncio.sleep(1)
+        
+        if not target_image_url:
+            print(f"{prefix} ⚠️ Could not find uploaded image URL. Proceeding without reference image (might fail if required).")
+
+    # ---------------------------------------------------------
+    # PROBE: Search for Signature Generation Logic
+    # ---------------------------------------------------------
+    print(f"{prefix} Probing for X-Client-Signature logic in loaded scripts...")
+    signature_info = await page.evaluate("""async () => {
+        const scripts = Array.from(document.querySelectorAll('script[src]'));
+        for (const script of scripts) {
+            // Filter for likely candidates
+            if (script.src.includes('lovart') || script.src.includes('index') || script.src.includes('app') || script.src.includes('umi') || script.src.includes('pages')) {
+                try {
+                    const resp = await fetch(script.src);
+                    const text = await resp.text();
+                    // Search for the header string
+                    const idx = text.toLowerCase().indexOf('x-client-signature');
+                    if (idx !== -1) {
+                        const start = Math.max(0, idx - 800);
+                        const end = Math.min(text.length, idx + 1200);
+                        return { src: script.src, snippet: text.substring(start, end) };
+                    }
+                } catch (e) {}
+            }
+        }
+        return null;
+    }""")
+
+    if signature_info:
+        print(f"{prefix} ✅ Found signature code in {signature_info['src']}")
+        # Clean up snippet for printing
+        snippet = signature_info['snippet'].replace('\n', ' ').replace('\r', '')
+        print(f"{prefix} Snippet: {snippet[:2000]}...") # Limit length
+    else:
+        print(f"{prefix} ⚠️ Signature code not found in scripts.")
+    
+    # 4. Send API Request
+    if token and project_id:
+        api_url = "https://lgw.lovart.ai/v1/generator/tasks"
+        
+        # Clean the image URL (remove query params like ?x-oss-process...)
+        clean_image_url = None
+        if target_image_url:
+             clean_image_url = target_image_url.split('?')[0]
+             print(f"{prefix} Cleaned image URL: {clean_image_url}")
+
+        api_images_list = []
+        if clean_image_url:
+            api_images_list.append(clean_image_url)
+            
+        payload = {
+            "project_id": project_id,
+            "generator_name": "vertex/anon-bob",
+            "input_args": {
+                "prompt": prompt,
+                "aspect_ratio": ratio if ratio else "1:1",
+                "resolution": resolution if resolution else "2K",
+                "image": api_images_list
+            }
+        }
+        
+        # Use page.evaluate to execute fetch in the browser context.
+
+        # This ensures we share the exact network stack/proxy/cookies of the page.
+        # We also attempt to mock some headers.
+        try:
+            print(f"{prefix} Sending POST to {api_url} via page.evaluate (fetch)...")
+            
+            # We inject a small script to perform the fetch
+            # Note: We now inject the signature generation logic via Webpack hook
+            fetch_result = await page.evaluate("""async ({url, payload, token}) => {
+                try {
+                    // 1. Define Helper to get Signature via Webpack Hook
+                    const getSignature = async (timestamp, uuid) => {
+                         return new Promise((resolve, reject) => {
+                            // Find the global webpack chunk array
+                            // Name might vary, but user logs showed 'webpackChunk_shakkerai_web_pro'
+                            const chunkName = 'webpackChunk_shakkerai_web_pro';
+                            if (!window[chunkName]) {
+                                reject("Webpack chunk global " + chunkName + " not found");
+                                return;
+                            }
+                            
+                            // Hook into Webpack to steal the require function
+                            window[chunkName].push([
+                                [Symbol("stealer")], 
+                                {}, 
+                                (r) => {
+                                    try {
+                                        // Module 72736 is the one exporting 'H' (signature function)
+                                        // based on our analysis of common.98186913.js
+                                        const mod = r(72736);
+                                        if (mod && mod.H) {
+                                            // H(timestamp, uuid, param3, param4)
+                                            // param3 and param4 appear to be empty strings in usage
+                                            const sig = mod.H(timestamp, uuid, "", "");
+                                            resolve(sig);
+                                        } else {
+                                            reject("Module 72736 or function H not found in webpack require");
+                                        }
+                                    } catch(e) {
+                                        reject(e);
+                                    }
+                                }
+                            ]);
+                         });
+                    };
+
+                    // 2. Prepare Data
+                    // Generate UUID without dashes
+                    const uuid = (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                        return v.toString(16);
+                    })).replace(/-/g, '');
+                    
+                    const ts = Date.now().toString();
+
+                    // 3. Generate Signature
+                    let signature = "";
+                    try {
+                        console.log("[In-Page] Attempting to generate signature...");
+                        signature = await getSignature(ts, uuid);
+                        console.log("[In-Page] Signature generated: " + signature);
+                    } catch(e) {
+                        console.error("[In-Page] Signature generation failed:", e);
+                        return { error: "Signature generation failed: " + e.toString() };
+                    }
+
+                    // 4. Send Request
+                    console.log("[In-Page] Sending fetch request...");
+                    const resp = await fetch(url, {
+                        method: 'POST',
+                        credentials: 'include', // IMPORTANT: Send cookies
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'token': token,
+                            'Accept': 'application/json, text/plain, */*',
+                            'x-req-uuid': uuid,
+                            'x-send-timestamp': ts,
+                            'x-client-signature': signature
+                        },
+                        body: JSON.stringify(payload)
+                    });
+                    
+                    const text = await resp.text();
+                    let json = null;
+                    try {
+                        json = JSON.parse(text);
+                    } catch(e) {}
+                    
+                    return {
+                        status: resp.status,
+                        statusText: resp.statusText,
+                        data: json,
+                        text: text
+                    };
+                } catch (e) {
+                    return { error: e.toString() };
+                }
+            }""", {"url": api_url, "payload": payload, "token": token})
+            
+            if fetch_result.get("error"):
+                 print(f"{prefix} ❌ Fetch Error inside browser: {fetch_result['error']}")
+            elif fetch_result.get("status") == 200:
+                resp_data = fetch_result.get("data", {})
+                task_id = resp_data.get("data", {}).get("generator_task_id")
+                
+                if task_id:
+                    print(f"{prefix} ✅ Task created: {task_id}. Polling for result...")
+                    
+                    # Poll using fetch loop as well to be safe
+                    poll_url = f"https://lgw.lovart.ai/v1/generator/tasks?task_id={task_id}"
+                    
+                    for i in range(100): # 5 minutes
+                        await asyncio.sleep(3)
+                        
+                        poll_res = await page.evaluate("""async ({url, token}) => {
+                             try {
+                                const resp = await fetch(url, {
+                                    credentials: 'include',
+                                    headers: { 'token': token }
+                                });
+                                return await resp.json();
+                             } catch(e) { return null; }
+                        }""", {"url": poll_url, "token": token})
+                        
+                        if poll_res:
+                            status = poll_res.get("data", {}).get("status")
+                            
+                            if status == "completed":
+                                artifacts = poll_res.get("data", {}).get("artifacts", [])
+                                if artifacts:
+                                    final_url = artifacts[0].get("content")
+                                    print(f"{prefix} ✅ Generation Completed: {final_url}")
+                                    result["image_url"] = final_url
+                                    break
+                            elif status == "failed":
+                                print(f"{prefix} ❌ Task Failed: {poll_res}")
+                                break
+                            else:
+                                if i % 5 == 0:
+                                    print(f"{prefix} Task status: {status}...")
+                        else:
+                            print(f"{prefix} Poll failed (network error?)")
+                else:
+                    print(f"{prefix} ❌ Failed to get task_id. Response: {resp_data}")
+            else:
+                print(f"{prefix} ❌ API Request failed: {fetch_result.get('status')} {fetch_result.get('text')}")
+                
+        except Exception as e:
+            print(f"{prefix} API Exception: {e}")
+    else:
+        print(f"{prefix} ❌ Cannot use API mode: Missing token or project_id.")
+
+    # ---------------------------------------------------------
+    # END API IMPLEMENTATION
+    # ---------------------------------------------------------
+
+    """
     # 3. Resolution & Ratio
     print(f"[lovart] Setting Resolution={resolution}, Ratio={ratio}...")
     
@@ -1931,12 +2185,57 @@ async def run_generate_image_on_page(page: Page, start_frame_image_path: str, pr
         "network_hits": [],
     }
 
+    import json
+    log_file = "lovart_api_logs.jsonl"
+    print(f"{prefix} Network logging enabled. Saving to {log_file}")
+
+    async def _on_request(request):
+        try:
+            # Capture all requests to lovart or api
+            if "lovart" in request.url or "api" in request.url:
+                req_data = {
+                    "type": "request",
+                    "url": request.url,
+                    "method": request.method,
+                    "headers": await request.all_headers(),
+                    "post_data": request.post_data,
+                    "timestamp": time.time()
+                }
+                with open(log_file, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(req_data, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
     def _maybe_add_hit(hit: dict):
         if len(result["network_hits"]) >= 120:
             return
         result["network_hits"].append(hit)
 
     async def _on_response(response):
+        # Log response
+        try:
+            if "lovart" in response.url or "api" in response.url:
+                resp_data = {
+                    "type": "response",
+                    "url": response.url,
+                    "status": response.status,
+                    "headers": await response.all_headers(),
+                    "timestamp": time.time()
+                }
+                
+                # Try to get body for text/json
+                ct = resp_data["headers"].get("content-type", "")
+                if "json" in ct or "text" in ct:
+                    try:
+                        resp_data["body"] = await response.text()
+                    except:
+                        pass
+                
+                with open(log_file, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(resp_data, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
         nonlocal click_ts
         if click_ts is None:
             return
@@ -2038,9 +2337,11 @@ async def run_generate_image_on_page(page: Page, start_frame_image_path: str, pr
     # Ensure no stale listeners from previous calls (crucial for correct image detection)
     try:
         context.remove_listener("response", _on_response)
+        context.remove_listener("request", _on_request)
     except:
         pass
     context.on("response", _on_response)
+    context.on("request", _on_request)
     
     await asyncio.sleep(2)
     generate_btn = page.get_by_test_id("generator-generate-button")
@@ -2064,14 +2365,18 @@ async def run_generate_image_on_page(page: Page, start_frame_image_path: str, pr
     click_ts = time.time()
     print(f"{prefix} click generate image: {click_ts}")
     await generate_btn.click()
-    try:
-        await lovart_handle_security_verification(page, prefix=prefix)
-    except Exception:
-        pass
+    
+    print(f"{prefix} 🛑 Auto-verification DISABLED. Please resolve the captcha manually in the browser window!")
+    print(f"{prefix} ⏳ Waiting up to 5 minutes for manual interaction and image generation...")
+    
+    # try:
+    #     await lovart_handle_security_verification(page, prefix=prefix)
+    # except Exception:
+    #     pass
 
     try:
-        # Wait for network response (timeout 180s)
-        await asyncio.wait_for(done_event.wait(), timeout=180)
+        # Wait for network response (timeout 300s)
+        await asyncio.wait_for(done_event.wait(), timeout=300)
     except asyncio.TimeoutError:
         # Fallback: Check UI for result?
         # Maybe the user wants us to just return success if clicked.
@@ -2079,6 +2384,8 @@ async def run_generate_image_on_page(page: Page, start_frame_image_path: str, pr
         pass
     finally:
         context.remove_listener("response", _on_response)
+        context.remove_listener("request", _on_request)
+    """
 
     if not result["image_url"]:
          # Try to find the latest image on canvas?
