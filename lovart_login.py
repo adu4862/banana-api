@@ -1108,14 +1108,15 @@ BRIDGE_SECRET = 'MySuperSecretKey123!'
 AVAILABLE_DOMAINS = [
     "mx9922x.site",
     "kp4829m.space",
-    "mx892.asia", 
-    "mx892.fun", 
-    "mx892.icu", 
-    "mx892.online", 
-    "mx892.site", 
-    "mx892.space", 
-    "mx892.website", 
-    "mx9922x.site", 
+    "dax452x.store",
+    "dixk297jx.site",
+    "ij7hx6d.christmas",
+    "sgc585x2.online",
+    "ij7hx6d.lat",
+    "ij7hx6d.mom",
+    "ij7hx6d.pics",
+    "ij7hx6d.surf",
+    "kp4829m.space",
     # "new-domain.com"
 ]
 def get_temp_email():
