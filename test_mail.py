@@ -116,7 +116,7 @@ def check_email_via_bridge(email, password):
     resp = None
     try:
         # 尝试 1: 优先走代理
-        resp = requests.post(BRIDGE_URL, json=payload,  timeout=10)
+        resp = requests.post(BRIDGE_URL, json=payload, proxies=proxies, timeout=10)
     except requests.exceptions.RequestException:
         # 尝试 2: 代理失败则直连 (可能是代理不支持该端口或目标拒绝代理 IP)
         try:
