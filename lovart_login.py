@@ -1181,7 +1181,7 @@ def get_email_code(token):
     }
     
     try:
-        resp = requests.post(BRIDGE_URL, json=payload, proxies=PROXIES, timeout=10)
+        resp = requests.post(BRIDGE_URL, json=payload,  timeout=10)
         
         if resp.status_code != 200:
             # print(f"Bridge API error: {resp.status_code}")
