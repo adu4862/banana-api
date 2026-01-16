@@ -7,8 +7,8 @@ import platform
 # ================= 配置区域 =================
 
 # 1. 代理配置 (v2rayN)
-PROXY_HOST = "127.0.0.1"
-PROXY_PORT = 7897 if platform.system() == 'Darwin' else 10808
+PROXY_HOST = "192.168.1.159"
+PROXY_PORT = 7897 
 
 # 构造 requests 专用的代理字典
 proxies = {
