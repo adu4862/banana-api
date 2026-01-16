@@ -15,6 +15,11 @@ proxies = {
     'https': 'socks5://192.168.1.13:10808'
 }
 
+# proxies = {
+#     'http': 'socks5://127.0.0.1:10808',
+#     'https': 'socks5://127.0.0.1:10808'
+# }
+
 try:
     print("Attempting request with SOCKS proxy...")
     # Use a site that is likely accessible or will fail with connection error, not dependency error
