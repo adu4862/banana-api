@@ -51,7 +51,7 @@ _lovart_init_lock = threading.Lock()
 def _idle_cleanup_loop():
     while True:
         try:
-            lovart_cleanup_idle_sessions(max_idle_seconds=600)
+            lovart_cleanup_idle_sessions(max_idle_seconds=5*60*60)
         except Exception as e:
             print(f"[lovart] Idle cleanup error: {e}")
         time.sleep(60)
